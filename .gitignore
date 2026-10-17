@@ -1,0 +1,27 @@
+# ── Secrets — NEVER commit these ────────────────────────────────────────────
+backend/.env
+backend/.env.bak
+backend/.env.pre-whisper-upgrade
+frontend/.env.local
+*.env.local
+
+# ── Python ───────────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ── Node / frontend ──────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── Editors / OS ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# ── Local artifacts ──────────────────────────────────────────────────────────
+*.log
+.claude/

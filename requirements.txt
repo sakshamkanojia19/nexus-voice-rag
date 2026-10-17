@@ -1,0 +1,33 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+openai>=1.40.0
+anthropic>=0.39.0
+# Scraped-search fallback. `duckduckgo-search` was renamed to `ddgs`; the old
+# name is a deprecated shim. This tier is a last resort either way — it returns
+# unrelated results at HTTP 200 when blocked, so web_search.py filters it.
+ddgs>=9.0.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+pydantic>=2.6.0
+websockets>=12.0
+python-multipart>=0.0.9
+pypdf>=4.2.0
+python-docx>=1.1.0
+numpy>=1.26.0
+# LangChain + Qdrant RAG pipeline
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+langchain-qdrant>=0.2.0
+qdrant-client>=1.12.0
+# Supabase auth — verifies Google-sign-in JWTs server side
+pyjwt[crypto]>=2.9.0
+# Free local speech-to-text (STT_BACKEND=local, the default). Downloads model
+# weights on first use. Drop this and set STT_BACKEND=openai to use hosted STT.
+# 1.1 is the floor rather than 1.0: `large-v3-turbo`, which config.py now asks
+# for by default, is not in the model catalogue before then and would fail to
+# resolve — landing every install on a fallback tier without saying why.
+faster-whisper>=1.1.0
+# GPU transcription (LOCAL_WHISPER_DEVICE=cuda) additionally needs the CUDA
+# runtime wheels — kept OUT of this file so cloud/CPU deploys don't pull
+# ~1.3GB they can't use:  pip install -r requirements-gpu.txt

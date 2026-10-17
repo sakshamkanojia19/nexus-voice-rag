@@ -1,0 +1,47 @@
+{
+  "name": "universalcb-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Nexus — the self-hosted assistant that knows when you're done talking.",
+  "author": "Saksham Kanojia",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit",
+    "test": "node --experimental-strip-types src/lib/echo.test.mjs && node --experimental-strip-types src/lib/speech-chunk.test.mjs && node --experimental-strip-types src/lib/voice-gate.test.mjs && node --experimental-strip-types src/lib/apiKey.test.mjs && node --experimental-strip-types src/lib/accessGate.test.mjs && node --experimental-strip-types src/lib/chatStorage.test.mjs && node --experimental-strip-types src/lib/endpointing.test.mjs && node --experimental-strip-types src/lib/prosody.test.mjs && node --experimental-strip-types src/lib/whisper-prompt.test.mjs && node --experimental-strip-types src/lib/agents.test.mjs && node --experimental-strip-types src/lib/script-lang.test.mjs"
+  },
+  "dependencies": {
+    "@radix-ui/react-avatar": "^1.1.1",
+    "@radix-ui/react-scroll-area": "^1.2.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@ricky0123/vad-web": "^0.0.27",
+    "@supabase/supabase-js": "^2.112.2",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.11.0",
+    "gsap": "^3.15.0",
+    "lottie-react": "^2.4.1",
+    "lucide-react": "^0.453.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.2",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.5.4",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.184.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

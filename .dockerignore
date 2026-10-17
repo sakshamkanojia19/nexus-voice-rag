@@ -1,0 +1,18 @@
+# Keep the Cloud Run image to the backend only.
+.venv
+frontend
+node_modules
+__pycache__
+*.py[cod]
+.git
+.claude
+
+# Secrets never enter the image — Cloud Run env vars carry configuration.
+backend/.env
+backend/.env.bak
+backend/.env.pre-whisper-upgrade
+
+# Docs and local artifacts.
+*.md
+*.txt
+!requirements.txt

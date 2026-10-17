@@ -1,0 +1,66 @@
+name: Bug report
+description: Something behaves differently than documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For voice bugs, the console transcript is the single most useful thing
+        you can attach. Set `VITE_DEBUG=true` and the widget logs the endpointer
+        decisions and latency numbers — that log usually contains the answer,
+        and it becomes the test case for the fix.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Say "..." and pause after the word "..."
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console transcript
+      description: With VITE_DEBUG=true. Paste the log around the failure.
+      render: text
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Voice — turn-taking / endpointing
+        - Voice — barge-in or echo
+        - Speech-to-text (Whisper)
+        - Documents / RAG
+        - Web search or citations
+        - Auth / API keys
+        - Deployment (Vercel / Cloud Run)
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Windows 11, Chrome 140, CPU-only, STT_BACKEND=local"
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste an API key**, even a redacted one. If a key appears in a
+        log you are about to share, rotate it first.

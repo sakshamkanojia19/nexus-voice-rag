@@ -1,0 +1,480 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --primary: 258 90% 66%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --accent: 295 88% 62%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 65% 42%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 258 90% 66%;
+
+    --radius: 1rem;
+  }
+
+  /* Dark-first (this app forces .dark): neutral CiteTalk-style grey + violet CTA. */
+  .dark {
+    --background: 240 5% 9%;
+    --foreground: 240 12% 95%;
+
+    --card: 240 5% 12%;
+    --card-foreground: 240 12% 95%;
+
+    /* Solid, slightly-elevated grey for dropdowns/menus (ChatGPT/CiteTalk style). */
+    --popover: 240 5% 15%;
+    --popover-foreground: 240 12% 95%;
+
+    --muted: 240 4% 17%;
+    --muted-foreground: 240 5% 62%;
+
+    --primary: 262 85% 68%;
+    --primary-foreground: 240 20% 8%;
+
+    --secondary: 240 4% 17%;
+    --secondary-foreground: 240 12% 95%;
+
+    --accent: 290 78% 64%;
+    --accent-foreground: 240 20% 8%;
+
+    --destructive: 0 72% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 58% 50%;
+    --success-foreground: 240 20% 8%;
+
+    --warning: 38 90% 58%;
+    --warning-foreground: 240 20% 8%;
+
+    --border: 240 5% 19%;
+    --input: 240 5% 19%;
+    --ring: 262 85% 70%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    /* Decorative glows use negative insets; on narrow screens they were
+       widening the page and letting it pan sideways — which is how half the
+       hero ends up off-screen on a phone. The page never scrolls on x. */
+    overflow-x: clip;
+  }
+
+  /* Neutral grey text selection (no purple tint). */
+  ::selection {
+    background: hsl(240 5% 38% / 0.6);
+    color: hsl(var(--foreground));
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.45);
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: hsl(var(--card) / 0.6);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+  }
+
+  .glass-strong {
+    background: hsl(var(--card) / 0.85);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* ── Working-state vocabulary ───────────────────────────────────────────────
+     One shared language for "the agent is busy": a highlight sweeping through
+     the live label, a hairline sweep under the card, and skeleton lines where
+     the answer will land. Deliberately monochrome — the only colour is the
+     violet in the progress sweep, which is what marks the block as live. */
+
+  .text-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted-foreground)) 0%,
+      hsl(var(--foreground)) 15%,
+      hsl(var(--muted-foreground)) 30%,
+      hsl(var(--muted-foreground)) 100%
+    );
+    background-size: 250% 100%;
+    background-position: 100% 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: text-shimmer 2.4s linear infinite;
+  }
+
+  .progress-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    overflow: hidden;
+    background: hsl(var(--border) / 0.5);
+  }
+  .progress-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 38%;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.75), transparent);
+    animation: progress-indeterminate 1.7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .skeleton-line {
+    display: block;
+    border-radius: 4px;
+    background:
+      linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.06), transparent),
+      hsl(var(--muted) / 0.85);
+    background-size: 200% 100%, 100% 100%;
+    animation: skeleton-sweep 1.6s ease-in-out infinite;
+  }
+
+  /* Solid, opaque elevated surface for dropdowns/menus (ChatGPT/CiteTalk style).
+     Defined as a real CSS rule (not a Tailwind theme colour) so it never depends
+     on a config rebuild — the page never bleeds through. */
+  .surface {
+    background-color: hsl(var(--popover));
+  }
+
+  /* CiteTalk-style elegant serif wordmark. */
+  .font-display {
+    font-family: "Newsreader", Georgia, serif;
+  }
+
+  /* Two-tone wordmark accent — violet → magenta. */
+  .text-gradient {
+    background: linear-gradient(120deg, hsl(258 92% 78%) 0%, hsl(282 92% 74%) 50%, hsl(305 92% 70%) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Animated violet aurora — used on the hero. */
+  .aurora {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .aurora::before,
+  .aurora::after {
+    content: "";
+    position: absolute;
+    width: 60vw;
+    height: 60vw;
+    border-radius: 9999px;
+    filter: blur(120px);
+    opacity: 0.5;
+    will-change: transform;
+  }
+  .aurora::before {
+    top: -18vw;
+    left: -10vw;
+    background: radial-gradient(circle, hsl(258 92% 60% / 0.55), transparent 60%);
+    animation: aurora-drift-a 22s ease-in-out infinite alternate;
+  }
+  .aurora::after {
+    bottom: -22vw;
+    right: -12vw;
+    background: radial-gradient(circle, hsl(305 92% 58% / 0.5), transparent 60%);
+    animation: aurora-drift-b 26s ease-in-out infinite alternate;
+  }
+
+  /* Flat, static grey background (no animation) with a soft CiteTalk-style
+     spotlight near the top-centre — calm and distraction-free. */
+  .chat-static-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(70% 55% at 50% 26%, hsl(240 5% 18% / 0.65), transparent 72%),
+      hsl(var(--background));
+  }
+}
+
+/* ── Auth surface ───────────────────────────────────────────────────────────
+   One place to tune the sign-in / API-key page.
+
+   In `components` rather than `utilities` on purpose: Tailwind emits that layer
+   first, so a `pr-11` on a `.auth-field` still wins. In the utilities layer the
+   two would collide and which one applied would depend on emit order.
+
+   These exist because the auth components had grown into 8-line `cn()` strings
+   repeated per element, which is exactly how two controls meant to look
+   identical quietly stop being identical. Values sit a half-step darker and
+   warmer than the app chrome: this page owns the whole viewport, and app-grey
+   at that scale reads as flat.
+
+   Palette discipline is one saturated element per view — the primary button.
+   Everything else is a neutral and a hairline. */
+:root {
+  --auth-bg: 240 6% 5%;
+  --auth-panel: 240 5% 8.5%;
+  --auth-panel-alt: 240 6% 6.5%;
+  --auth-field: 240 7% 5.5%;
+  --auth-line: 0 0% 100% / 0.07;
+  --auth-line-strong: 0 0% 100% / 0.11;
+  --auth-accent: 258 72% 58%;
+}
+
+@layer components {
+  /* Card elevation: a real shadow stack plus a specular top edge. The inset
+     highlight is what stops a dark card reading as a flat hole — it's the
+     one-pixel cue that a surface is catching light from above. */
+  .auth-card {
+    background-color: hsl(var(--auth-panel));
+    border: 1px solid hsl(var(--auth-line));
+    box-shadow:
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.045),
+      0 1px 2px hsl(0 0% 0% / 0.5),
+      0 12px 28px -12px hsl(0 0% 0% / 0.7),
+      0 48px 96px -32px hsl(0 0% 0% / 0.85);
+  }
+
+  .auth-field {
+    height: 2.625rem;
+    width: 100%;
+    border-radius: 0.5rem;
+    background-color: hsl(var(--auth-field));
+    border: 1px solid hsl(var(--auth-line));
+    padding: 0 0.875rem;
+    font-size: 0.875rem;
+    color: hsl(var(--foreground));
+    /* Inner top shadow: the field reads as recessed and the button as raised.
+       Without it both are just rounded rectangles of slightly different grey. */
+    box-shadow: inset 0 1px 2px hsl(0 0% 0% / 0.35);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    outline: none;
+  }
+  .auth-field::placeholder {
+    color: hsl(var(--muted-foreground) / 0.6);
+  }
+  .auth-field:hover:not(:focus) {
+    border-color: hsl(var(--auth-line-strong));
+  }
+  .auth-field:focus {
+    border-color: hsl(var(--auth-accent) / 0.55);
+    box-shadow:
+      inset 0 1px 2px hsl(0 0% 0% / 0.35),
+      0 0 0 3px hsl(var(--auth-accent) / 0.16);
+  }
+  .auth-field[aria-invalid="true"] {
+    border-color: hsl(var(--destructive) / 0.55);
+  }
+  .auth-field[aria-invalid="true"]:focus {
+    box-shadow:
+      inset 0 1px 2px hsl(0 0% 0% / 0.35),
+      0 0 0 3px hsl(var(--destructive) / 0.16);
+  }
+
+  .auth-btn {
+    display: flex;
+    height: 2.625rem;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: background-color 0.15s ease, border-color 0.15s ease,
+      transform 0.12s ease, box-shadow 0.15s ease;
+  }
+  /* Lifts 1px on hover and returns on press — small enough to read as
+     mechanical rather than animated. */
+  .auth-btn-primary {
+    background-color: hsl(var(--auth-accent));
+    color: #fff;
+    box-shadow:
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.16),
+      0 1px 2px hsl(0 0% 0% / 0.4),
+      0 8px 20px -8px hsl(var(--auth-accent) / 0.65);
+  }
+  .auth-btn-primary:hover:not(:disabled) {
+    background-color: hsl(258 72% 62%);
+    transform: translateY(-1px);
+  }
+  .auth-btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+    background-color: hsl(258 72% 50%);
+  }
+  .auth-btn-primary:disabled {
+    background-color: hsl(0 0% 100% / 0.055);
+    color: hsl(var(--muted-foreground));
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
+  .auth-btn-secondary {
+    background-color: hsl(0 0% 100% / 0.035);
+    border: 1px solid hsl(var(--auth-line-strong));
+    color: hsl(var(--foreground));
+    font-weight: 500;
+  }
+  .auth-btn-secondary:hover:not(:disabled) {
+    background-color: hsl(0 0% 100% / 0.07);
+    transform: translateY(-1px);
+  }
+  .auth-btn-secondary:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  .auth-btn-secondary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .auth-link {
+    border-radius: 0.25rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+    transition: color 0.15s ease;
+  }
+  .auth-link:hover {
+    color: hsl(var(--foreground));
+  }
+
+  /* Rings on :focus-visible only, so a mouse user never sees one and a keyboard
+     user never loses their place. */
+  .auth-focus:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px hsl(var(--auth-panel)), 0 0 0 4px hsl(var(--auth-accent) / 0.65);
+  }
+
+  /* Fine grain. At 3.5% it is invisible as texture and does one job: break up
+     the banding that large flat dark gradients show on 8-bit panels. */
+  .auth-grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-btn,
+  .auth-btn-primary:hover:not(:disabled),
+  .auth-btn-secondary:hover:not(:disabled) {
+    transform: none;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+}
+
+/* Listening-indicator bars (fallback) + voice-doodle equalizer */
+@keyframes ucb-bar {
+  0%, 100% { transform: scaleY(0.4); }
+  50% { transform: scaleY(1.4); }
+}
+
+/* Voice-doodle eye blink */
+@keyframes doodle-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.1); }
+}
+.doodle-eyes {
+  animation: doodle-blink 4.5s ease-in-out infinite;
+}
+
+@keyframes text-shimmer {
+  to { background-position: -150% 0; }
+}
+
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(360%); }
+}
+
+@keyframes skeleton-sweep {
+  0% { background-position: 150% 0, 0 0; }
+  100% { background-position: -50% 0, 0 0; }
+}
+
+/* Motion here is purely informational, so it degrades to a static equivalent
+   rather than disappearing — the states must stay legible without animation. */
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer {
+    animation: none;
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    color: hsl(var(--foreground));
+  }
+  .progress-bar {
+    animation: none;
+    width: 100%;
+    background: hsl(var(--primary) / 0.35);
+  }
+  .skeleton-line {
+    animation: none;
+  }
+}
+
+@keyframes aurora-drift-a {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(8vw, 6vh) scale(1.15); }
+}
+@keyframes aurora-drift-b {
+  0% { transform: translate(0, 0) scale(1.05); }
+  100% { transform: translate(-7vw, -5vh) scale(1); }
+}

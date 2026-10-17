@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a capability or a change in behaviour.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you hit, not the solution you have in mind — it often changes what the right fix is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like it to do
+
+  - type: markdown
+    attributes:
+      value: |
+        If this is a new capability the assistant should have, note that tool
+        choice belongs to the model here: it would land as a new `StructuredTool`
+        in `backend/agent.py`, never as a keyword trigger. See CONTRIBUTING.md.

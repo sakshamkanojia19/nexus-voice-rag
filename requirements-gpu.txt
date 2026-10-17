@@ -1,0 +1,7 @@
+# CUDA runtime for GPU transcription (LOCAL_WHISPER_DEVICE=cuda), on top of
+# requirements.txt. Pip wheels, ~1.3GB on disk, loaded only when a CUDA device
+# is configured — backend/stt.py registers their DLL directories on Windows.
+# Skip this file entirely for CPU-only machines and cloud deploys (Cloud Run
+# has no GPU; use STT_BACKEND=openai there instead).
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
