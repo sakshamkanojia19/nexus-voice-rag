@@ -302,6 +302,8 @@ def _words(text: str) -> set[str]:
 #: answer to a prompted question reuses a term or two; an echo reuses nearly all
 #: of them.
 _PROMPT_ECHO_OVERLAP = 0.8
+#: Repeats of one prompt word, in a short segment, that mark it as an echo.
+_PROMPT_TERM_REPEATS = 3
 
 
 def _is_prompt_echo(text: str, prompt: str) -> bool:
@@ -321,7 +323,14 @@ def _is_prompt_echo(text: str, prompt: str) -> bool:
     primed = _words(prompt)
     if not primed:
         return False
-    return len(said & primed) / len(said) >= _PROMPT_ECHO_OVERLAP
+    if len(said & primed) / len(said) >= _PROMPT_ECHO_OVERLAP:
+        return True
+    # A degenerate echo loops on the prompt's terms, which a set of unique
+    # words hides: "LLM, Nexus, Qdrant, embeddings, Qdrant, and Qdrant,
+    # embeddings, Qdrant, and Qdrant, are you?" is 4/7 by unique words. A real
+    # question almost never says the same prompt word three times.
+    tokens = [w for w in re.findall(r"[^\W_]+", (text or "").lower()) if len(w) > 2]
+    return len(tokens) <= 20 and any(tokens.count(w) >= _PROMPT_TERM_REPEATS for w in primed)
 
 
 def _keep_segment(

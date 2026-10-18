@@ -319,7 +319,7 @@ Every pure-logic module ships with a runnable test file — and the test cases a
 cd frontend && npm test && npm run lint    # lint = tsc --noEmit, strict
 
 # Backend — script-style modules
-python -m backend.stt_test          # 40 checks
+python -m backend.stt_test          # 41 checks
 python -m backend.identity_test     # 57 checks
 python -m backend.credentials_test  # 17 checks
 python -m backend.providers_test    # 20 checks

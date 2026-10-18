@@ -274,6 +274,19 @@ def test_a_real_question_using_prompted_words_survives() -> None:
         assert stt._keep_segment(text, GOOD_NO_SPEECH, GOOD_LOGPROB, PROMPT), text
 
 
+def test_a_looping_echo_of_prompt_terms_is_dropped() -> None:
+    """Captured: Whisper answered short audio with its own vocabulary on loop."""
+    prompt = "A spoken question for Nexus about RAG, LLM, Nexus, Qdrant, embeddings, vector database, API key."
+    loop = "LLM, Nexus, Qdrant, embeddings, Qdrant, and Qdrant, embeddings, Qdrant, and Qdrant, are you?"
+    assert stt._is_prompt_echo(loop, prompt)
+    for real in (
+        "What is Qdrant and how does it store embeddings?",
+        "Nexus, how are you?",
+        "How do I add my API key to Nexus?",
+    ):
+        assert not stt._is_prompt_echo(real, prompt), real
+
+
 def test_prompt_echo_filtering_is_inert_without_a_prompt() -> None:
     for text in ("what is RAG", "Nexus Qdrant embeddings"):
         assert stt._keep_segment(text, GOOD_NO_SPEECH, GOOD_LOGPROB, ""), text

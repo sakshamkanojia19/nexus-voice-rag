@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isPromptEcho } from "@/lib/whisper-prompt";
 import { config, debugLog } from "@/lib/config";
 import { transcribe } from "@/lib/api";
 import {
@@ -214,29 +215,6 @@ function isLikelyHallucination(text: string): boolean {
   const stripped = t.replace(/[^\p{L}\p{N}\s]/gu, "").trim();
   if (stripped.length < 3) return true;
   return false;
-}
-
-/**
- * Whisper has a known failure mode where it echoes the `prompt` parameter
- * back as the transcript when the audio is silent / too noisy / too short.
- * Detect by checking if the transcript is dominated by tokens from the prompt.
- */
-function isPromptEcho(transcript: string, prompt: string): boolean {
-  const p = prompt.trim();
-  if (!p) return false;
-  const norm = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
-  const t = norm(transcript);
-  const np = norm(p);
-  if (!t) return true;
-  // Exact / substring match — clear echo.
-  if (t === np || np.includes(t) || t.includes(np)) return true;
-  // Token-overlap heuristic: if >=70% of the transcript's tokens come from the
-  // prompt and the transcript is short-ish, it's probably an echo.
-  const tTokens = t.split(" ").filter(Boolean);
-  if (tTokens.length === 0) return true;
-  const pTokenSet = new Set(np.split(" ").filter(Boolean));
-  const overlap = tTokens.filter((tok) => pTokenSet.has(tok)).length;
-  return overlap / tTokens.length >= 0.7 && tTokens.length <= 20;
 }
 
 function pickMimeType(): string {

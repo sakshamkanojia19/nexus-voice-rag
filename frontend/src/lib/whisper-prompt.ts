@@ -84,3 +84,39 @@ export function buildWhisperPrompt(docNames: readonly string[] = []): string {
     ? prompt
     : `${prompt.slice(0, WHISPER_PROMPT_MAX_CHARS - 1).trimEnd()}.`;
 }
+
+/**
+ * Whisper has a known failure mode where it echoes the `prompt` parameter
+ * back as the transcript when the audio is silent / too noisy / too short.
+ * Detect by checking if the transcript is dominated by tokens from the prompt.
+ */
+export function isPromptEcho(transcript: string, prompt: string): boolean {
+  const p = prompt.trim();
+  if (!p) return false;
+  const norm = (s: string): string => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  const t = norm(transcript);
+  const np = norm(p);
+  if (!t) return true;
+  // Exact / substring match — clear echo.
+  if (t === np || np.includes(t) || t.includes(np)) return true;
+  const tTokens = t.split(" ").filter(Boolean);
+  if (tTokens.length === 0) return true;
+  if (tTokens.length > 20) return false;
+  const pTokenSet = new Set(np.split(" ").filter(Boolean));
+  // Token-overlap heuristic: if >=70% of the transcript's tokens come from the
+  // prompt and the transcript is short-ish, it's probably an echo.
+  const overlap = tTokens.filter((tok) => pTokenSet.has(tok)).length;
+  if (overlap / tTokens.length >= 0.7) return true;
+  // A degenerate echo loops on the prompt's terms. "LLM, Nexus, Qdrant,
+  // embeddings, Qdrant, and Qdrant, embeddings, Qdrant, and Qdrant, are you?"
+  // scored 9/13 = 0.69 on overlap and was submitted as a question. A real
+  // question almost never says the same prompt word three times.
+  const counts = new Map<string, number>();
+  for (const tok of tTokens) {
+    if (tok.length > 2 && pTokenSet.has(tok)) counts.set(tok, (counts.get(tok) ?? 0) + 1);
+  }
+  return [...counts.values()].some((n) => n >= PROMPT_TERM_REPEATS);
+}
+
+/** Repeats of one prompt word, in a short transcript, that mark it as an echo. */
+const PROMPT_TERM_REPEATS = 3;

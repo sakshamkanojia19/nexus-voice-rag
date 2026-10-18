@@ -3,7 +3,7 @@
 // The prompt is a bias, not a filter, so the properties worth pinning are about
 // restraint: it must stay short, must not grow without bound as documents are
 // added, and must survive filenames that are not tidy.
-import { WHISPER_PROMPT_MAX_CHARS, buildWhisperPrompt } from "./whisper-prompt.ts";
+import { WHISPER_PROMPT_MAX_CHARS, buildWhisperPrompt, isPromptEcho } from "./whisper-prompt.ts";
 
 let failed = 0;
 const check = (label, ok, detail = "") => {
@@ -65,6 +65,29 @@ check(
   "different documents give different prompts",
   buildWhisperPrompt(["a.pdf"]) !== buildWhisperPrompt(["b.pdf"]),
 );
+
+
+// ── Prompt echo ────────────────────────────────────────────────────────────
+// Whisper reads its own conditioning text back on short or unclear audio.
+{
+  const prompt = buildWhisperPrompt([]);
+  // Verbatim from a captured session: the user said something like "how are you".
+  check(
+    "a looping echo of the prompt's terms is caught",
+    isPromptEcho("LLM, Nexus, Qdrant, embeddings, Qdrant, and Qdrant, embeddings, Qdrant, and Qdrant, are you?", prompt),
+  );
+  check("the prompt read back verbatim is caught", isPromptEcho(prompt, prompt));
+  for (const real of [
+    "What is Qdrant and how does it store embeddings?",
+    "what is Qdrant vector database",
+    "Nexus, how are you?",
+    "Can you tell me about what is the THAAD missile system?",
+    "How do I add my API key to Nexus?",
+  ]) {
+    check(`a real question survives: ${JSON.stringify(real)}`, !isPromptEcho(real, prompt));
+  }
+  check("no prompt means no echo", !isPromptEcho("Qdrant Qdrant Qdrant", ""));
+}
 
 console.log(failed === 0 ? "\nAll whisper-prompt checks passed." : `\n${failed} check(s) FAILED.`);
 process.exit(failed === 0 ? 0 : 1);
