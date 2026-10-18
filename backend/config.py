@@ -187,9 +187,16 @@ QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "nexus_documents")
 # in-browser), TTS (OS voices) and primary STT (Web Speech) already cost nothing,
 # and this fallback transcription was the last step that billed. First use
 # downloads the model weights, and CPU transcription is slower than hosted —
-# set STT_BACKEND=openai if you would rather pay for the latency. Either way
-# stt.transcribe() falls back to the other backend rather than failing.
+# set STT_BACKEND=openai if you would rather pay for the latency.
 STT_BACKEND: str = os.getenv("STT_BACKEND", "local").lower()
+# Whether this server may run Whisper itself when hosted transcription is
+# unavailable (the user's key is rate-limited or out of credit, their provider
+# has none — xAI — or the provider is down). On by default only when local is
+# the configured backend. On a hosted deployment the server's own CPU would be
+# paying for the user's quota — on Cloud Run that is ~3s a clip on one vCPU plus
+# a model download per new instance — so it says "unavailable" at once instead,
+# and the browser's own transcript is used for that turn.
+LOCAL_STT_FALLBACK: bool = _bool(os.getenv("LOCAL_STT_FALLBACK"), STT_BACKEND == "local")
 # faster-whisper model when STT_BACKEND=local. "auto" picks from the device —
 # see stt._configured_model for the reasoning and the measurements behind it.
 #
@@ -234,6 +241,14 @@ WEB_SEARCH_PROVIDER: str = os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lowe
 # Model used for the hosted-search call. Must be one that supports the
 # web_search tool; the mini tier is enough since it only relays results.
 WEB_SEARCH_MODEL: str = os.getenv("WEB_SEARCH_MODEL", "gpt-4o-mini")
+# Groq's hosted search: gpt-oss with the built-in `browser_search` tool, paid by
+# the caller's own Groq key (Groq bills it per search). OFF by default: it is a
+# third gpt-oss call per search turn, with page content inside it, and Groq's
+# free tier allows ~8K tokens a minute — a budget one search turn already
+# nearly spends. Turn on when your users hold paid Groq keys; off, Groq users
+# get the free scrape/Wikipedia tiers.
+GROQ_BROWSER_SEARCH: bool = _bool(os.getenv("GROQ_BROWSER_SEARCH"), False)
+GROQ_SEARCH_MODEL: str = os.getenv("GROQ_SEARCH_MODEL", "openai/gpt-oss-20b")
 TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "").strip()
 # Minimum share of a query's meaningful words that must appear in a scraped
 # result for it to be citable. This is a safety net against a blocked scraper

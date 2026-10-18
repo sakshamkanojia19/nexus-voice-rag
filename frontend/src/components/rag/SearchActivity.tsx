@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronDown, FileText, Globe, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -105,12 +105,12 @@ export function SearchActivity({ turn }: { turn: ChatTurn }) {
   const runningIndex = streaming && !hasContent ? tools.length - 1 : -1;
   const working = streaming && !hasContent;
 
-  const [open, setOpen] = useState(true);
-  // A manual toggle outranks the auto-collapse — never fight the user's click.
-  const touched = useRef(false);
-  useEffect(() => {
-    if (!streaming && !touched.current) setOpen(false);
-  }, [streaming]);
+  // Folded the moment prose starts, not when the stream ends: the answer then
+  // shifts once, at the same instant the skeleton is replaced, instead of
+  // sliding up again after the last token. A manual toggle outranks this —
+  // never fight the user's click.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const open = manualOpen ?? false;
 
   const elapsed = useElapsed(working, turn.startedAt);
   const total =
@@ -146,10 +146,7 @@ export function SearchActivity({ turn }: { turn: ChatTurn }) {
       <div className="mb-3 font-sans">
         <button
           type="button"
-          onClick={() => {
-            touched.current = true;
-            setOpen((v) => !v);
-          }}
+          onClick={() => setManualOpen(!open)}
           aria-expanded={open}
           className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-card/40 px-2.5 py-1.5 text-[12px] text-muted-foreground transition-colors hover:border-border hover:bg-card/70 hover:text-foreground/80"
         >
@@ -223,9 +220,10 @@ export function SearchActivity({ turn }: { turn: ChatTurn }) {
 export function AnswerSkeleton() {
   return (
     <div className="space-y-2.5 py-1" aria-hidden>
+      {/* Two lines, not three: the first streamed line replaces this, and a
+          taller placeholder makes the answer jump up as it arrives. */}
       <span className="skeleton-line h-3.5 w-[92%]" />
-      <span className="skeleton-line h-3.5 w-[78%]" />
-      <span className="skeleton-line h-3.5 w-[54%]" />
+      <span className="skeleton-line h-3.5 w-[64%]" />
     </div>
   );
 }

@@ -50,6 +50,11 @@ const CONTINUING = [
   "explain",                          // single verb, nothing to explain yet
   "elon",                             // one word — a name, not a question
   "elon musk",                        // two words — still probably the subject
+  "can you",                          // subject pronoun, verb still to come
+  "hello nexus what is the",          // a greeting skipped must not hide a dangling end
+  "i was wondering if you",
+  "do you",
+  "and it",
   // Hindi mid-clause endings
   "मुझे बताओ कि",
   "यह किसके",
@@ -70,6 +75,10 @@ const COMPLETE = [
   "Tell me about Elon Musk.",
   "what is the total revenue of tesla",   // question, no punctuation
   "how does photosynthesis actually work",
+  "how are you doing today nexus",
+  "hello nexus how are you",              // greeting before the question (user's console)
+  "what is THAAD",                         // interrogative + copula + subject
+  "hey what is RAG",
   "yes",
   "no",
   "stop",
@@ -90,6 +99,8 @@ for (const text of COMPLETE) {
 
 // ── No strong signal: a moderate wait, never a snap judgement ──────────────
 const UNCLEAR = [
+  "i just wanted to thank you",
+  "i will talk to you",
   "i went to the store yesterday",
   "the report says revenue grew",
 ];

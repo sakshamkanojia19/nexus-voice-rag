@@ -5,6 +5,7 @@ appending [n] citations to a shared `sources` list.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any, AsyncIterator
@@ -98,16 +99,20 @@ _DOC_DESC = (
     "[1], [2], … that you MUST reuse when citing."
 )
 _WEB_DESC = (
-    "Search the public web for general knowledge, definitions, news, current events, or to "
-    "augment/elaborate on the documents. Returns results tagged with citation numbers to reuse.\n"
+    "Search the public web for facts that change or that you might misremember: news, current "
+    "events, prices, releases, specific figures and dates, niche names — or when the user asks "
+    "for sources. Do NOT search for things you already know (concepts, definitions, history), "
+    "for chit-chat, or when the user is correcting what you heard ('I said X, not Y') or "
+    "commenting on your last reply — answer those directly. Returns results tagged with "
+    "citation numbers to reuse.\n"
     "The query MUST stand on its own: the search engine cannot see the conversation. Carry the "
     "subject over from earlier turns and name it in full — after discussing Spider-Man, ask for "
     "'Spider-Man Brand New Day movie', never 'movie brand new day', which retrieves nothing. "
     "Prefer the specific proper noun over generic words, and omit a year unless the user gave one.\n"
     "Spell the INTENT into the query, not just the subject: a follow-up like 'what about the "
     "Realme P4 5G?' after a phone-shopping question needs 'Realme P4 5G price specifications "
-    "India', not the bare name. If the results come back thin for what was asked (a lone video, "
-    "no figures), call this tool again with a sharper query rather than answering without facts."
+    "India', not the bare name. Search again only if the results clearly miss what was asked "
+    "(a lone video, no figures) — once, with a sharper query, never the same words reshuffled."
 )
 
 
@@ -173,15 +178,19 @@ def build_tools(
         return "\n\n".join(blocks)
 
     async def search_web(query: str) -> str:
-        # Hosted search is OpenAI's tool, so only an OpenAI key may pay for it.
-        # Any other provider's request goes straight to the keyless tiers.
+        # A key only ever pays for its own vendor's hosted search (OpenAI's web
+        # search, Groq's browser search). A provider without one — or no key —
+        # goes straight to the keyless tiers.
+        hosted = provider.hosted_search
         results = await web_search.search(
-            query, api_key=api_key if provider.web_search else None,
+            query, api_key=api_key if hosted else None, hosted=hosted,
         )
         if not results:
+            # Not "retry": every search tier has already been tried for this
+            # query, and a retry is another model round plus another search.
             return (
-                f"No results for query={query!r}. The search service may be rate-limited. "
-                "Retry once with a more specific query, or answer from your own knowledge."
+                f"No results for query={query!r}; the search service returned nothing. "
+                "Answer from your own knowledge and say briefly that you couldn't verify it online."
             )
         blocks: list[str] = []
         for r in results:
@@ -288,15 +297,25 @@ async def agent_stream(
         for tc in tool_calls:
             args = tc.get("args") or {}
             yield {"type": "tool", "name": tc.get("name", ""), "query": str(args.get("query", ""))}
+
+        async def run(tc: dict) -> str:
             tool = tools_by_name.get(tc.get("name", ""))
             tool_started = time.perf_counter()
             try:
-                result = await tool.ainvoke(args) if tool else f"[error] unknown tool {tc.get('name')}"
+                result = await tool.ainvoke(tc.get("args") or {}) if tool else f"[error] unknown tool {tc.get('name')}"
             except Exception as e:  # noqa: BLE001
                 log.exception("tool %s failed", tc.get("name"))
                 result = f"[error] {e}"
             log.info("turn tool %s: %s", tc.get("name"), ms(tool_started))
-            convo.append(ToolMessage(content=str(result)[:6000], tool_call_id=tc.get("id", "")))
+            return str(result)
+
+        # A round's calls run together: two searches cost the slower one, not
+        # the sum. Results go back in call order, matched by tool_call_id.
+        # Citation numbers are claimed as each tool finishes, which is fine —
+        # every result block carries its own numbers.
+        results = await asyncio.gather(*(run(tc) for tc in tool_calls))
+        for tc, result in zip(tool_calls, results):
+            convo.append(ToolMessage(content=result[:6000], tool_call_id=tc.get("id", "")))
 
     # The tool budget is spent, but the conversation now holds every result the
     # tools returned — often a dozen-plus sources. The old behaviour threw all

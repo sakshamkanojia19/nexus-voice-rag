@@ -163,6 +163,41 @@ export function words(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Words after which "you" / "it" is a *subject* still waiting for its verb:
+ * "can you…", "if you…", "do you…". Anything else before them — a verb
+ * ("thank you"), a copula ("how are you", "is it"), a preposition ("talk to
+ * you") — makes the pronoun an object or a finished question, and the sentence
+ * can end there. "how are you" was being held for the full thinking window,
+ * repeatedly, before every greeting.
+ */
+const SUBJECT_SLOT = new Set([
+  "and", "or", "but", "because", "since", "although", "though", "while",
+  "whereas", "unless", "until", "if", "whether", "that", "than", "so", "then",
+  "when", "where", "why", "what", "which", "who",
+  "do", "does", "did", "have", "has", "had", "can", "could", "will", "would",
+  "shall", "should", "may", "might", "must",
+]);
+
+function endsOnObjectPronoun(w: string[]): boolean {
+  const last = w[w.length - 1];
+  if (last !== "you" && last !== "it") return false;
+  const prev = w[w.length - 2];
+  return prev !== undefined && !SUBJECT_SLOT.has(prev);
+}
+
+const COPULAS = new Set(["is", "are", "was", "were", "am", "what's", "who's", "how's", "where's"]);
+
+/** Greetings, the assistant's name and discourse openers that can precede a
+ *  question without being part of it. */
+const LEAD_IN = new Set(["hi", "hello", "hey", "hii", "ok", "okay", "so", "well", "nexus", "zoe"]);
+
+function dropLeadIn(w: string[]): string[] {
+  let i = 0;
+  while (i < w.length - 1 && LEAD_IN.has(w[i] ?? "")) i++;
+  return w.slice(i);
+}
+
 /** True when the transcript is nothing but hesitation — "um", "uh so". */
 export function isOnlyFiller(text: string): boolean {
   const w = words(text);
@@ -268,7 +303,7 @@ function judgeText(transcript: string): EndpointDecision {
   // Grammatically impossible endings. Checked before punctuation for the same
   // reason: "I want to know about the." is a recognizer artifact, not a finished
   // sentence, and cutting the user off there is the exact failure being fixed.
-  if (DANGLING.has(last)) {
+  if (DANGLING.has(last) && !endsOnObjectPronoun(w)) {
     return {
       waitMs: ENDPOINT_CONTINUING_MS,
       completeness: "continuing",
@@ -299,10 +334,17 @@ function judgeText(transcript: string): EndpointDecision {
   }
 
   // A recognisable question with a real clause behind it reads as finished even
-  // without a question mark: "what is the capital of france".
+  // without a question mark: "what is the capital of france". A greeting or the
+  // assistant's name in front ("hello nexus, how are you") is skipped first —
+  // it used to hide the question and leave a finished greeting held open.
+  const q = dropLeadIn(w);
   const opensQuestion = ["what", "which", "who", "how", "why", "where", "when", "is", "are", "can", "could", "do", "does", "did", "should", "would", "will"]
-    .includes(w[0] ?? "");
-  if (opensQuestion && w.length >= 5) {
+    .includes(q[0] ?? "");
+  // "what is THAAD", "how are you": an interrogative, a copula and a subject is
+  // already a whole question. Other shapes ("can you explain…") keep needing
+  // more words before we call them finished.
+  const shortCopulaQuestion = q.length >= 3 && COPULAS.has(q[1] ?? "");
+  if (opensQuestion && (q.length >= 5 || shortCopulaQuestion)) {
     return { waitMs: ENDPOINT_COMPLETE_MS, completeness: "complete", reason: "complete question" };
   }
 

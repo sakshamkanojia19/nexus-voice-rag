@@ -140,8 +140,8 @@ def test_a_retired_model_is_named_in_the_error() -> None:
 def _web_search_key_for(api_key: str, provider: providers.Provider) -> list:
     seen: list = []
 
-    async def fake_search(query: str, max_results: int = 5, api_key: str | None = None):
-        seen.append(api_key)
+    async def fake_search(query: str, max_results: int = 5, api_key: str | None = None, hosted=None):
+        seen.append((api_key, hosted))
         return []
 
     real = web_search.search
@@ -155,10 +155,57 @@ def _web_search_key_for(api_key: str, provider: providers.Provider) -> list:
     return seen
 
 
-def test_hosted_web_search_only_ever_receives_an_openai_key() -> None:
-    assert _web_search_key_for(VALID, OPENAI) == [VALID]
-    assert _web_search_key_for(XAI_KEY, XAI) == [None], "xAI key was handed to OpenAI search"
-    assert _web_search_key_for(GROQ_KEY, GROQ) == [None], "Groq key was handed to OpenAI search"
+def test_hosted_web_search_only_ever_receives_its_own_vendors_key() -> None:
+    assert _web_search_key_for(VALID, OPENAI) == [(VALID, "openai")]
+    assert _web_search_key_for(GROQ_KEY, GROQ) == [(GROQ_KEY, "groq")]
+    assert _web_search_key_for(XAI_KEY, XAI) == [(None, None)], "xAI key was handed to a hosted search"
+
+
+def _tiers_reached(api_key, hosted) -> dict:
+    """Which hosted tier each key actually reaches inside the dispatcher."""
+    reached: dict = {"openai": [], "groq": []}
+
+    async def fake_openai(q, n, key=None):
+        reached["openai"].append(key)
+        return []
+
+    async def fake_groq(q, n, key=None):
+        reached["groq"].append(key)
+        return []
+
+    async def nothing(*a, **k):
+        return []
+
+    saved = (web_search._openai_search, web_search._groq_search,
+             web_search._scrape_search, web_search._wikipedia_search)
+    web_search._openai_search, web_search._groq_search = fake_openai, fake_groq
+    web_search._scrape_search = web_search._wikipedia_search = nothing
+    try:
+        # The Groq tier is opt-in (free-tier token budgets); what is under test
+        # here is routing, so switch it on.
+        with _settings(TAVILY_API_KEY=None, GROQ_BROWSER_SEARCH=True):
+            asyncio.run(web_search._dispatch("auto", "q", 5, api_key, hosted))
+    finally:
+        (web_search._openai_search, web_search._groq_search,
+         web_search._scrape_search, web_search._wikipedia_search) = saved
+    return reached
+
+
+def test_a_groq_key_is_never_sent_to_openai_search() -> None:
+    reached = _tiers_reached(GROQ_KEY, "groq")
+    assert reached["openai"] == [] and reached["groq"] == [GROQ_KEY], reached
+
+
+def test_an_openai_key_is_never_sent_to_groq_search() -> None:
+    reached = _tiers_reached(VALID, "openai")
+    assert reached["openai"] == [VALID] and reached["groq"] == [], reached
+
+
+def test_a_mislabelled_key_reaches_no_hosted_tier() -> None:
+    """The vendor label is checked against the key's own shape: an OpenAI key
+    claimed as Groq's must not be sent to Groq (or to OpenAI under that claim)."""
+    reached = _tiers_reached(VALID, "groq")
+    assert reached["groq"] == [] and reached["openai"] == [], reached
 
 
 def test_web_search_does_not_fall_back_to_the_server_openai_key() -> None:

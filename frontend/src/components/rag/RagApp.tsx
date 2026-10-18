@@ -1,5 +1,5 @@
 /* @refresh reset -- this stateful audio orchestrator must remount after hook edits in development. */
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, Menu, Plus, X } from "lucide-react";
@@ -396,6 +396,13 @@ export function RagApp() {
 
   const voice = useVoice({
     lang: convLang,
+    // Whisper's extra round trip buys accuracy only where it is short: local
+    // weights on a GPU, or hosted transcription the user's key can pay for
+    // (OpenAI and Groq serve one; xAI does not, and the CPU fallback is slow).
+    preferWhisperFinal:
+      access.caps?.stt_local?.device === "cuda" ||
+      (access.caps?.stt_backend === "openai" &&
+        (access.keyProvider === "openai" || access.keyProvider === "groq")),
     // Tell Whisper what this user is likely to be talking about. Without it the
     // decoder falls back to general-English priors, where "drag" beats "RAG"
     // and a grounded document's title has no chance at all.
@@ -410,7 +417,12 @@ export function RagApp() {
       if (assistantMayBeAudible() && isLowInformationBargeIn(text)) {
         debugLog("voice: lone-word candidate ignored during playback:", text);
         recoverFalseInterruption();
-        return "echo";
+        // No verdict, not "echo". One word is too little to interrupt on, but
+        // it is no evidence the speech is ours either — and an echo verdict
+        // latches for the rest of the utterance, so the first interim word of
+        // a real question ("about…") used to bin the whole question unheard.
+        // Echo is still caught on the fuller text, here or in onTranscript.
+        return;
       }
       if (assistantMayBeAudible() && isLikelyAssistantEcho(text, latestAssistantText())) {
         debugLog("voice echo ignored during assistant playback:", text);
@@ -827,7 +839,7 @@ export function RagApp() {
     if (!speech.speaking) setReadingId(null);
   }, [speech.speaking]);
 
-  const toggleReadAloud = (turn: { id: string; content: string }) => {
+  const toggleReadAloudNow = (turn: { id: string; content: string }) => {
     speech.unlock();
     if (readingId === turn.id) {
       speech.cancel();
@@ -846,6 +858,15 @@ export function RagApp() {
     speech.speak(text, { force: true });
     setReadingId(turn.id);
   };
+  // Stable identity for the message list: MessageItem is memoized so a
+  // streaming answer re-renders only itself, and a fresh handler every render
+  // would defeat that for every message on screen.
+  const toggleReadAloudRef = useRef(toggleReadAloudNow);
+  toggleReadAloudRef.current = toggleReadAloudNow;
+  const toggleReadAloud = useCallback(
+    (turn: { id: string; content: string }) => toggleReadAloudRef.current(turn),
+    [],
+  );
 
   const selectAgent = (a: VoiceAgent) => {
     speech.unlock();

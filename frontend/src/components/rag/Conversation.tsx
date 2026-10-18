@@ -14,14 +14,65 @@ interface ConversationProps {
   speakingId?: string | null;
 }
 
+/** Within this distance of the bottom counts as "at the bottom". */
+const FOLLOW_SLACK_PX = 80;
+/** Long enough for a browser smooth scroll to finish. */
+const SMOOTH_SCROLL_MS = 450;
+
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let node = el?.parentElement ?? null; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY === "auto" || overflowY === "scroll") return node;
+  }
+  return null;
+}
+
 export function Conversation({ messages, voiceState, voiceInterim, onSpeak, speakingId }: ConversationProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const last = messages[messages.length - 1];
+
+  // Stick to the bottom while the user is there; let go the moment they scroll
+  // up to read. This used to start a *smooth* scroll on every content change —
+  // with Groq that is dozens a second, and Chrome restarts each one, which is
+  // the stutter, and it dragged a reader back down mid-sentence.
+  const followRef = useRef(true);
+  const ignoreScrollUntilRef = useRef(0);
 
   useEffect(() => {
+    const root = rootRef.current;
+    const scroller = scrollParent(root);
+    if (!root || !scroller) return;
+    const onScroll = () => {
+      if (performance.now() < ignoreScrollUntilRef.current) return;
+      followRef.current =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < FOLLOW_SLACK_PX;
+    };
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (!followRef.current || frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (performance.now() < ignoreScrollUntilRef.current) return;
+        scroller.scrollTop = scroller.scrollHeight;
+      });
+    });
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    observer.observe(root);
+    return () => {
+      scroller.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // A new turn (the user just sent something) always brings the view down —
+  // smoothly, once, with scroll tracking paused so the animation's own
+  // intermediate positions are not mistaken for the user scrolling away.
+  useEffect(() => {
+    followRef.current = true;
+    ignoreScrollUntilRef.current = performance.now() + SMOOTH_SCROLL_MS;
     bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [messages.length, last?.content, last?.tools?.length]);
+  }, [messages.length]);
 
   // GSAP entrance when we transition from the hero into the conversation view.
   useEffect(() => {

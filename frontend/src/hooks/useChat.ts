@@ -499,6 +499,34 @@ export function useChat(
 
     let acc = "";
     let finalSources: Source[] | undefined;
+    // Screen updates are coalesced to one per frame. Groq can deliver hundreds
+    // of deltas a second, and one setMessages per delta re-rendered the whole
+    // app for each of them. Speech still gets every delta immediately (below).
+    let cancelFlush: (() => void) | null = null;
+    const cancelPendingFlush = () => {
+      cancelFlush?.();
+      cancelFlush = null;
+    };
+    const flush = () => {
+      cancelPendingFlush();
+      // A stopped or replaced request must not write over what replaced it —
+      // abort() and truncateLastAssistant() may have already settled this turn.
+      if (abortRef.current !== controller) return;
+      const text = acc;
+      setMessages((m) => m.map((t) => (t.id === assistantId ? { ...t, content: text } : t)));
+    };
+    const scheduleFlush = () => {
+      if (cancelFlush) return;
+      // rAF never fires in a background tab; a timer keeps that tab's
+      // transcript current for when the user comes back.
+      if (document.hidden) {
+        const id = window.setTimeout(flush, 100);
+        cancelFlush = () => window.clearTimeout(id);
+      } else {
+        const id = window.requestAnimationFrame(flush);
+        cancelFlush = () => window.cancelAnimationFrame(id);
+      }
+    };
     // Turn latency breakdown — the network+model half of the budget. The voice
     // half (speech-end → here) is logged by useVoice.
     const sentAt = Date.now();
@@ -525,9 +553,10 @@ export function useChat(
             debugLog(`chat: time-to-first-token ${Date.now() - sentAt}ms`);
           }
           acc += ev.text;
-          setMessages((m) => m.map((t) => (t.id === assistantId ? { ...t, content: acc } : t)));
+          scheduleFlush();
           onDeltaRef.current?.(acc, fromVoice);
         } else if (ev.type === "tool") {
+          flush();
           onToolActivityRef.current?.(ev.name, ev.query, fromVoice);
           setMessages((m) =>
             m.map((t) =>
@@ -541,6 +570,7 @@ export function useChat(
             m.map((t) => (t.id === assistantId ? { ...t, model: ev.model, provider: ev.provider } : t)),
           );
         } else if (ev.type === "sources") {
+          flush();
           finalSources = ev.items;
           setMessages((m) => m.map((t) => (t.id === assistantId ? { ...t, sources: ev.items } : t)));
         } else if (ev.type === "error") {
@@ -548,15 +578,18 @@ export function useChat(
         }
       }
       if (!acc.trim()) throw new Error("The model returned an empty response.");
+      cancelPendingFlush();
+      const settled = abortRef.current === controller;
       setMessages((m) =>
         m.map((t) =>
           t.id === assistantId
-            ? { ...t, status: "complete", sources: finalSources ?? t.sources, endedAt: Date.now() }
+            ? { ...t, content: settled ? acc : t.content, status: "complete", sources: finalSources ?? t.sources, endedAt: Date.now() }
             : t,
         ),
       );
       onFinalRef.current?.(acc, fromVoice);
     } catch (e) {
+      cancelPendingFlush();
       const aborted = (e as Error).name === "AbortError";
       if (aborted) {
         setMessages((turns) =>

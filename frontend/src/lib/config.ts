@@ -14,8 +14,26 @@ export const config = {
   // lose to Zira. pickVoice() falls back to the local tiers when Aria is not
   // installed, so a machine without it still gets a working voice.
   ttsVoice: import.meta.env.VITE_TTS_VOICE || "aria",
-  debug: (import.meta.env.VITE_DEBUG || "false").toLowerCase() === "true",
+  debug: (import.meta.env.VITE_DEBUG || "false").toLowerCase() === "true" || runtimeDebug(),
 } as const;
+
+/**
+ * Logs on a deployed build without a rebuild: `?debug=1` turns them on and is
+ * remembered in this browser, `?debug=0` turns them off again. A production
+ * voice bug is only diagnosable from the browser that hit it, and VITE_DEBUG is
+ * baked in at build time.
+ */
+function runtimeDebug(): boolean {
+  const KEY = "nexus:debug";
+  try {
+    const flag = new URLSearchParams(window.location.search).get("debug");
+    if (flag === "1") window.localStorage.setItem(KEY, "1");
+    else if (flag === "0") window.localStorage.removeItem(KEY);
+    return window.localStorage.getItem(KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export function debugLog(...args: unknown[]): void {
   if (config.debug) console.log("[Nexus]", ...args);

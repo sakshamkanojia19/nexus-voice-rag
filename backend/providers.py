@@ -41,8 +41,9 @@ class Provider:
     keys_url: str
     #: Can embed documents for upload and document search.
     embeddings: bool
-    #: Has a hosted web-search tool web_search.py knows how to call.
-    web_search: bool
+    #: Which hosted web search this vendor's own key can pay for, if any:
+    #: "openai" (Responses web_search) or "groq" (gpt-oss browser_search).
+    hosted_search: str | None
     #: Has hosted speech-to-text on the OpenAI transcription protocol.
     transcription: bool
 
@@ -51,19 +52,19 @@ OPENAI = Provider(
     id="openai", label="OpenAI", base_url=None, key_env="OPENAI_API_KEY",
     key_prefix="sk-", key_re=re.compile(r"^sk-[A-Za-z0-9_\-]{16,250}$"),
     keys_url="https://platform.openai.com/api-keys",
-    embeddings=True, web_search=True, transcription=True,
+    embeddings=True, hosted_search="openai", transcription=True,
 )
 XAI = Provider(
     id="xai", label="xAI (Grok)", base_url=config.XAI_BASE_URL, key_env="XAI_API_KEY",
     key_prefix="xai-", key_re=re.compile(r"^xai-[A-Za-z0-9_\-]{16,250}$"),
     keys_url="https://console.x.ai",
-    embeddings=False, web_search=False, transcription=False,
+    embeddings=False, hosted_search=None, transcription=False,
 )
 GROQ = Provider(
     id="groq", label="Groq", base_url=config.GROQ_BASE_URL, key_env="GROQ_API_KEY",
     key_prefix="gsk_", key_re=re.compile(r"^gsk_[A-Za-z0-9]{16,250}$"),
     keys_url="https://console.groq.com/keys",
-    embeddings=False, web_search=False, transcription=True,
+    embeddings=False, hosted_search="groq", transcription=True,
 )
 
 PROVIDERS: dict[str, Provider] = {p.id: p for p in (OPENAI, XAI, GROQ)}

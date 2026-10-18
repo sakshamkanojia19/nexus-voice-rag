@@ -301,6 +301,117 @@ def test_iso639_returns_blank_rather_than_a_bad_guess() -> None:
         assert stt._iso639(value) == "", repr(value)
 
 
+def test_hosted_segments_get_the_local_filter() -> None:
+    """Groq/OpenAI Whisper over speaker bleed returns confident-sounding text
+    with a high no-speech probability; that must not become a user turn."""
+    result = {
+        "text": "What is pizza? I'm sorry.",
+        "segments": [
+            {"text": " What is pizza?", "no_speech_prob": 0.02, "avg_logprob": -0.2},
+            {"text": " I'm sorry.", "no_speech_prob": 0.93, "avg_logprob": -0.4},
+        ],
+    }
+    assert stt._hosted_text(result) == "What is pizza?"
+
+
+def test_hosted_segments_read_sdk_objects_too() -> None:
+    """The OpenAI SDK hands back attribute objects, not dicts."""
+    class Seg:
+        def __init__(self, text, nsp, lp):
+            self.text, self.no_speech_prob, self.avg_logprob = text, nsp, lp
+
+    class Result:
+        text = "ignored"
+        segments = [Seg(" Who made you?", 0.01, -0.1), Seg(" Thank you.", 0.1, -0.3)]
+
+    assert stt._hosted_text(Result()) == "Who made you?"
+
+
+def test_hosted_all_noise_comes_back_empty() -> None:
+    result = {"text": "And I will tell you.", "segments": [
+        {"text": " And I will tell you.", "no_speech_prob": 0.9, "avg_logprob": -0.5},
+    ]}
+    assert stt._hosted_text(result) == ""
+
+
+def test_hosted_plain_text_still_drops_boilerplate_and_prompt_echo() -> None:
+    """gpt-4o transcribe models return no segments — the text checks still run."""
+    assert stt._hosted_text({"text": "Thanks for watching!"}) == ""
+    prompt = "Nexus, RAG, Qdrant, retrieval"
+    assert stt._hosted_text({"text": "Nexus RAG Qdrant retrieval"}, prompt) == ""
+    assert stt._hosted_text({"text": "How does Qdrant store vectors?"}, prompt) == (
+        "How does Qdrant store vectors?"
+    )
+
+
+def test_only_whisper_models_are_asked_for_segments() -> None:
+    assert stt._reports_segments("whisper-large-v3-turbo")
+    assert stt._reports_segments("whisper-1")
+    assert not stt._reports_segments("gpt-4o-mini-transcribe")
+
+
+# ── Fallback policy: who pays when hosted transcription fails ────────────────
+def _route(*, backend: str, fallback: bool, provider, hosted_fails: bool = False):
+    """Run stt.transcribe with fake backends; report which ran and the outcome."""
+    import asyncio
+
+    ran: list[str] = []
+
+    async def fake_hosted(*a, **k):
+        ran.append("hosted")
+        if hosted_fails:
+            raise RuntimeError("429 rate limited")
+        return "hosted text"
+
+    async def fake_local(*a, **k):
+        ran.append("local")
+        return "local text"
+
+    saved = (stt.transcribe_hosted, stt.transcribe_local)
+    stt.transcribe_hosted, stt.transcribe_local = fake_hosted, fake_local
+    try:
+        with _settings(STT_BACKEND=backend, LOCAL_STT_FALLBACK=fallback):
+            try:
+                out = asyncio.run(stt.transcribe(b"x", "a.wav", api_key="key", provider=provider))
+            except stt.SttUnavailable:
+                out = "UNAVAILABLE"
+    finally:
+        stt.transcribe_hosted, stt.transcribe_local = saved
+    return ran, out
+
+
+def test_hosted_failure_fails_fast_when_local_fallback_is_off() -> None:
+    """A rate-limited user key must not turn into CPU decoding on the server."""
+    from .providers import GROQ
+    ran, out = _route(backend="openai", fallback=False, provider=GROQ, hosted_fails=True)
+    assert ran == ["hosted"] and out == "UNAVAILABLE", (ran, out)
+
+
+def test_hosted_failure_falls_back_locally_when_allowed() -> None:
+    from .providers import GROQ
+    ran, out = _route(backend="openai", fallback=True, provider=GROQ, hosted_fails=True)
+    assert ran == ["hosted", "local"] and out == "local text", (ran, out)
+
+
+def test_a_provider_without_transcription_never_reaches_local_when_off() -> None:
+    from .providers import XAI
+    ran, out = _route(backend="openai", fallback=False, provider=XAI)
+    assert ran == [] and out == "UNAVAILABLE", (ran, out)
+
+
+def test_local_backend_is_unaffected_by_the_switch() -> None:
+    """Local first is the whole point of STT_BACKEND=local; the switch only
+    governs the server decoding on a hosted deployment's behalf."""
+    from .providers import GROQ
+    ran, out = _route(backend="local", fallback=False, provider=GROQ)
+    assert ran == ["local"] and out == "local text", (ran, out)
+
+
+def test_local_fallback_defaults_follow_the_backend() -> None:
+    assert config._bool(None, "local" == "local") is True
+    assert config._bool(None, "openai" == "local") is False
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

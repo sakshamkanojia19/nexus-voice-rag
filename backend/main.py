@@ -145,6 +145,17 @@ def _ndjson(event: dict) -> str:
     return json.dumps(event, ensure_ascii=False) + "\n"
 
 
+def _retry_after_seconds(e: Exception) -> int | None:
+    """`Retry-After` from a provider's 429 response, when the SDK kept it."""
+    headers = getattr(getattr(e, "response", None), "headers", None)
+    raw = headers.get("retry-after") if headers else None
+    try:
+        secs = int(float(raw)) if raw else 0
+    except ValueError:
+        return None
+    return secs if secs > 0 else None
+
+
 def _upstream_error(e: Exception, provider: providers.Provider) -> str:
     """What to tell the user when the provider refused the request.
 
@@ -164,9 +175,14 @@ def _upstream_error(e: Exception, provider: providers.Provider) -> str:
     if status == 403:
         return f"Your {name} key doesn't have access to this model. Check the key's permissions with {name}."
     if status == 429:
+        # The provider says how long to wait; a voice user deciding whether to
+        # try again in a moment or go make tea needs that number.
+        wait = _retry_after_seconds(e)
+        when = f"Try again in about {wait} seconds" if wait else "Wait a minute and try again"
         return (
-            f"{name} is rate-limiting this key, or it has run out of credit. Wait a moment, "
-            f"or check your usage and billing with {name}."
+            f"{name} is rate-limiting this key: too many tokens or requests in the last "
+            f"minute, or it has run out of credit. {when}, or check your usage and "
+            f"billing with {name}."
         )
     if status == 404:
         # The provider's own message names the model, which is the one fact the
@@ -206,7 +222,10 @@ def _agent_profile(
     elif req.mode == "deep":
         model, max_iterations = models.deep, config.DEEP_MAX_ITERATIONS
     else:
-        model, max_iterations = models.default, 5
+        # Three rounds: search, one sharper follow-up, then the answer. The
+        # fourth and fifth were re-searches of the same thing in other words,
+        # each a model call plus a search the user sat through.
+        model, max_iterations = models.default, 3
 
     # An explicit pick overrides the mode's default model but not its budget:
     # choosing a model shouldn't silently buy more tool rounds.
@@ -520,6 +539,10 @@ async def transcribe_endpoint(
         log.info("transcribe backend=%s lang=%s len=%d -> %r",
                  config.STT_BACKEND, language, len(content), text[:120])
         return {"text": text, "backend": config.STT_BACKEND}
+    except stt.SttUnavailable as e:
+        # Expected (a rate-limited key, an outage): one line, no traceback.
+        log.warning("transcribe unavailable: %s", redact(str(e)))
+        return {"error": redact(str(e)), "unavailable": True}
     except Exception as e:  # noqa: BLE001
         log.exception("transcribe failed")
         return {"error": redact(str(e))}

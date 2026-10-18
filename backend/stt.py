@@ -10,6 +10,7 @@ import sys
 import sysconfig
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import config, providers
@@ -208,6 +209,38 @@ def local_model_status() -> dict[str, object]:
     }
 
 
+#: A short spoken sentence (Windows TTS, 16 kHz mono) decoded once at boot.
+_WARMUP_CLIP = Path(__file__).parent / "assets" / "warmup.wav"
+
+
+def _warm_decode() -> None:
+    """Load the weights AND decode a real sentence.
+
+    Loading alone left the first real transcription paying for CUDA's lazy
+    setup, measured at 16-18s for the first spoken turn on a GTX 1650 Ti
+    against ~1.6s for every turn after. And the warm-up has to be *speech*:
+    the decoder's kernels only load when there are tokens to emit, so a clip
+    of silence or noise leaves the first real sentence at 4-5s. Measured here
+    with the first real decode after each warm-up: none 15.9s, 4s of noise
+    4.7s, a spoken sentence 1.6s.
+    """
+    started = time.perf_counter()
+    if _WARMUP_CLIP.is_file():
+        text = _decode_local(_WARMUP_CLIP.read_bytes(), _WARMUP_CLIP.name, "", "en")
+        log.info("faster-whisper warm decode: %.1fs (%r)", time.perf_counter() - started, text)
+        return
+    import numpy as np
+
+    model = _load_local_model()
+    log.warning("warm-up clip %s missing — warming with noise (first real decode will be slower)", _WARMUP_CLIP)
+    audio = (np.random.default_rng(0).standard_normal(16000 * 4) * 0.002).astype(np.float32)
+    segments, _info = model.transcribe(
+        audio, language="en", beam_size=config.LOCAL_WHISPER_BEAM_SIZE, vad_filter=False,
+    )
+    list(segments)  # decoding is lazy: nothing runs until the segments are read
+    log.info("faster-whisper warm decode: %.1fs", time.perf_counter() - started)
+
+
 async def warmup_local_model() -> None:
     """Load the weights ahead of the first voice turn, off the event loop.
 
@@ -217,7 +250,7 @@ async def warmup_local_model() -> None:
     if config.STT_BACKEND != "local" or not config.LOCAL_WHISPER_WARMUP:
         return
     try:
-        await asyncio.to_thread(_load_local_model)
+        await asyncio.to_thread(_warm_decode)
         log.info("faster-whisper ready (model=%s)", _local_model_name)
     except Exception as e:  # noqa: BLE001
         log.warning("faster-whisper warm-up failed (%s) — will retry on first use", e)
@@ -331,63 +364,110 @@ async def transcribe_hosted(
     iso = _iso639(language)
     if iso:
         kwargs["language"] = iso  # bias Whisper to the chosen language
+    if _reports_segments(model):
+        # Ask for the per-segment confidences so the same filter the local path
+        # runs can run here. Without them a hosted Whisper hands back its
+        # captions of speaker bleed and room noise ("I'm sorry.", "And I will
+        # tell you.") as plain text, and each one becomes a turn the user never
+        # said. Temperature 0 because the hosted endpoints don't re-decode a
+        # degenerate pass the way faster-whisper's temperature ladder does.
+        kwargs["response_format"] = "verbose_json"
+        kwargs["temperature"] = 0
     result = await client.audio.transcriptions.create(**kwargs)
-    return getattr(result, "text", "") or ""
+    return _hosted_text(result, prompt)
+
+
+def _reports_segments(model: str) -> bool:
+    """Whisper-family models return `verbose_json` segments with confidences.
+    The gpt-4o transcribe models accept only `json`/`text`."""
+    return "whisper" in (model or "").lower()
+
+
+def _hosted_text(result: object, prompt: str = "") -> str:
+    """The transcript a hosted response carries, after the hallucination filter.
+
+    With segments, each is judged exactly as `transcribe_local` judges its own.
+    Without them (the gpt-4o models) only the text-level checks can run.
+    """
+    def field(obj: object, name: str, default=None):
+        return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+
+    segments = field(result, "segments")
+    if segments:
+        kept = [
+            str(field(s, "text", "")).strip()
+            for s in segments
+            if _keep_segment(
+                str(field(s, "text", "")),
+                float(field(s, "no_speech_prob", 0.0) or 0.0),
+                float(field(s, "avg_logprob", 0.0) or 0.0),
+                prompt,
+            )
+        ]
+        return " ".join(kept).strip()
+
+    text = str(field(result, "text", "") or "").strip()
+    if not text or _HALLUCINATION_RE.match(text) or _is_prompt_echo(text, prompt):
+        return ""
+    return text
 
 
 async def transcribe_local(audio_bytes: bytes, filename: str, prompt: str = "", language: str = "") -> str:
     """Run faster-whisper in a thread so we don't block the event loop."""
-    def _run() -> str:
-        model = _load_local_model()
-        suffix = Path(filename or "audio.webm").suffix or ".webm"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
-        try:
-            iso = _iso639(language)
-            segments, _info = model.transcribe(
-                tmp_path,
-                language=iso or None,
-                initial_prompt=prompt or None,
-                beam_size=config.LOCAL_WHISPER_BEAM_SIZE,
-                # Re-decode at rising temperature when a pass looks degenerate.
-                # This is what recovers a garbled segment instead of emitting it.
-                temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-                # The single most important flag here. Left on (the default),
-                # Whisper feeds each segment its own previous output as context,
-                # so one bad segment seeds the next and the model locks into
-                # repeating a phrase for the rest of the clip. Our audio is one
-                # short utterance where cross-segment context buys almost
-                # nothing, so the trade is entirely one-sided.
-                condition_on_previous_text=False,
-                # Degenerate-output guards, at the library's own defaults —
-                # spelled out because they are load-bearing here, not incidental.
-                compression_ratio_threshold=2.4,
-                log_prob_threshold=-1.0,
-                no_speech_threshold=0.6,
-                # Drop stretches of near-silence rather than inviting the model
-                # to caption them. The browser already trimmed the utterance, so
-                # this mostly catches the tail of a thinking pause.
-                vad_filter=True,
-                vad_parameters={
-                    # A turn may span mid-sentence pauses; the frontend joins
-                    # those segments deliberately. Splitting on anything shorter
-                    # than a real gap would fight that.
-                    "min_silence_duration_ms": 500,
-                    # Keep a margin around detected speech. A clipped leading
-                    # consonant is a word Whisper has to guess at.
-                    "speech_pad_ms": 200,
-                },
-            )
-            kept = [
-                s.text.strip()
-                for s in segments
-                if _keep_segment(s.text, s.no_speech_prob, s.avg_logprob, prompt)
-            ]
-            return " ".join(kept).strip()
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
-    return await asyncio.to_thread(_run)
+    return await asyncio.to_thread(_decode_local, audio_bytes, filename, prompt, language)
+
+
+def _decode_local(audio_bytes: bytes, filename: str, prompt: str = "", language: str = "") -> str:
+    """The blocking decode behind `transcribe_local`; the warm-up calls it directly."""
+    model = _load_local_model()
+    suffix = Path(filename or "audio.webm").suffix or ".webm"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+    try:
+        iso = _iso639(language)
+        segments, _info = model.transcribe(
+            tmp_path,
+            language=iso or None,
+            initial_prompt=prompt or None,
+            beam_size=config.LOCAL_WHISPER_BEAM_SIZE,
+            # Re-decode at rising temperature when a pass looks degenerate.
+            # This is what recovers a garbled segment instead of emitting it.
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            # The single most important flag here. Left on (the default),
+            # Whisper feeds each segment its own previous output as context,
+            # so one bad segment seeds the next and the model locks into
+            # repeating a phrase for the rest of the clip. Our audio is one
+            # short utterance where cross-segment context buys almost
+            # nothing, so the trade is entirely one-sided.
+            condition_on_previous_text=False,
+            # Degenerate-output guards, at the library's own defaults —
+            # spelled out because they are load-bearing here, not incidental.
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
+            no_speech_threshold=0.6,
+            # Drop stretches of near-silence rather than inviting the model
+            # to caption them. The browser already trimmed the utterance, so
+            # this mostly catches the tail of a thinking pause.
+            vad_filter=True,
+            vad_parameters={
+                # A turn may span mid-sentence pauses; the frontend joins
+                # those segments deliberately. Splitting on anything shorter
+                # than a real gap would fight that.
+                "min_silence_duration_ms": 500,
+                # Keep a margin around detected speech. A clipped leading
+                # consonant is a word Whisper has to guess at.
+                "speech_pad_ms": 200,
+            },
+        )
+        kept = [
+            s.text.strip()
+            for s in segments
+            if _keep_segment(s.text, s.no_speech_prob, s.avg_logprob, prompt)
+        ]
+        return " ".join(kept).strip()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 async def transcribe(
@@ -417,6 +497,8 @@ async def transcribe(
     hosted = bool(key) and provider.transcription
 
     if backend == "local" or not hosted:
+        if backend != "local" and not config.LOCAL_STT_FALLBACK:
+            raise SttUnavailable(f"{provider.label} has no transcription for this request")
         try:
             return await transcribe_local(audio_bytes, filename, prompt, language)
         except Exception as e:  # noqa: BLE001
@@ -428,5 +510,20 @@ async def transcribe(
     try:
         return await transcribe_hosted(audio_bytes, filename, prompt, language, key, provider)
     except Exception as e:  # noqa: BLE001
+        if not config.LOCAL_STT_FALLBACK:
+            # Fail fast: the client falls back to the browser's transcript. See
+            # config.LOCAL_STT_FALLBACK for why the server doesn't decode here.
+            log.warning("hosted STT failed (%s) — local fallback off, reporting unavailable", e)
+            status = getattr(e, "status_code", None)
+            reason = (
+                "is rate-limiting transcription on this key" if status == 429
+                else "rejected the transcription request" if status in (401, 403)
+                else "transcription is unavailable right now"
+            )
+            raise SttUnavailable(f"{provider.label} {reason}.") from e
         log.warning("hosted STT failed (%s) — falling back to local", e)
         return await transcribe_local(audio_bytes, filename, prompt, language)
+
+
+class SttUnavailable(RuntimeError):
+    """No transcription this server is willing to run for this request."""

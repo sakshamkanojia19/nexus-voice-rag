@@ -125,6 +125,89 @@ def test_terms_strips_digits_and_punctuation() -> None:
     assert _terms("Elon Musk's revenue, 2026!") == {"elon", "musk", "revenue"}
 
 
+# ── Groq browser_search parsing ─────────────────────────────────────────────
+def test_groq_structured_results_become_sources() -> None:
+    from .web_search import groq_results
+    message = {
+        "content": "THAAD is a US missile defence system 【1†L3-L9】.",
+        "executed_tools": [{
+            "type": "browser_search",
+            "search_results": {"results": [
+                {"title": "THAAD - Wikipedia", "url": "https://en.wikipedia.org/wiki/THAAD",
+                 "content": "Terminal High Altitude Area Defense 【0†L1-L2】 is…", "score": 0.9},
+                {"title": "Missile Defense Agency", "url": "https://www.mda.mil/system/thaad.html",
+                 "content": "THAAD intercepts…"},
+            ]},
+        }],
+    }
+    out = groq_results(message, 5)
+    assert [r["url"] for r in out] == [
+        "https://en.wikipedia.org/wiki/THAAD", "https://www.mda.mil/system/thaad.html",
+    ], out
+    assert all("【" not in r["snippet"] for r in out), out
+
+
+def test_groq_urls_are_recovered_from_raw_output() -> None:
+    from .web_search import groq_results
+    message = {
+        "content": "Notes about pizza 【2†L6-L10】",
+        "executed_tools": [{"type": "browser_search", "output": (
+            "【0†Pizza - Wikipedia†https://en.wikipedia.org/wiki/Pizza】 L0: ... "
+            "see also https://www.britannica.com/topic/pizza."
+        )}],
+    }
+    out = groq_results(message, 5)
+    assert [r["url"] for r in out] == [
+        "https://en.wikipedia.org/wiki/Pizza", "https://www.britannica.com/topic/pizza",
+    ], out
+    assert out[0]["snippet"] == "Notes about pizza", out
+
+
+def test_groq_without_urls_returns_nothing_so_the_ladder_continues() -> None:
+    from .web_search import groq_results
+    assert groq_results({"content": "some notes", "executed_tools": []}, 5) == []
+    assert groq_results({"content": "some notes"}, 5) == []
+
+
+def test_groq_results_respect_max_and_dedupe() -> None:
+    from .web_search import groq_results
+    results = [{"title": f"t{i}", "url": f"https://x.com/{i % 3}", "content": "c"} for i in range(9)]
+    out = groq_results({"executed_tools": [{"search_results": {"results": results}}]}, 2)
+    assert [r["url"] for r in out] == ["https://x.com/0", "https://x.com/1"], out
+
+
+def test_groq_results_read_sdk_style_objects() -> None:
+    """The OpenAI SDK puts unknown fields like executed_tools in model_extra."""
+    from .web_search import groq_results
+
+    class Msg:
+        content = "notes"
+        model_extra = {"executed_tools": [{"search_results": {"results": [
+            {"title": "A", "url": "https://a.example/x", "content": "alpha"}]}}]}
+
+    assert [r["url"] for r in groq_results(Msg(), 5)] == ["https://a.example/x"]
+
+
+# ── Time budget ──────────────────────────────────────────────────────────────
+def test_a_stalled_ladder_gives_up_within_the_budget() -> None:
+    import asyncio
+    import time as _time
+    from . import web_search as ws
+
+    async def stall(*a, **k):
+        await asyncio.sleep(30)
+        return [{"title": "late", "url": "https://late", "snippet": ""}]
+
+    saved = (ws._dispatch, ws._SEARCH_BUDGET_S)
+    ws._dispatch, ws._SEARCH_BUDGET_S = stall, 0.3
+    try:
+        t = _time.monotonic()
+        out = asyncio.run(ws.search("never cached query xyz"))
+        elapsed = _time.monotonic() - t
+    finally:
+        ws._dispatch, ws._SEARCH_BUDGET_S = saved
+    assert out == [] and elapsed < 2, (out, elapsed)
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     failed = 0

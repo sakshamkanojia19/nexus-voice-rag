@@ -1,4 +1,5 @@
-import { Children, useState, type ReactNode } from "react";
+import { Children, memo, useMemo, useState, type ReactNode } from "react";
+import type { Components } from "react-markdown";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,6 +8,8 @@ import { NexusMark } from "@/components/brand/NexusLogo";
 import { cn } from "@/lib/utils";
 import type { ChatTurn } from "@/hooks/useChat";
 import type { Source } from "@/lib/api";
+import { useSmoothText } from "@/hooks/useSmoothText";
+import { canSplit, splitBlocks, stabilizeTail } from "@/lib/stream-markdown";
 import { AnswerSkeleton, SearchActivity } from "./SearchActivity";
 import { Sources } from "./Sources";
 
@@ -75,56 +78,89 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 }
 
 // ── Markdown renderer ────────────────────────────────────────────────────────
-function Markdown({ text, sources }: { text: string; sources?: Source[] }) {
+const REMARK_PLUGINS = [remarkGfm];
+
+/**
+ * Element renderers, built once per sources list. They must keep their
+ * identity between renders: an inline `components={{...}}` object is a new set
+ * of component types every time, and React then unmounts and rebuilds every
+ * paragraph, table and chip in the answer on every streamed token.
+ */
+function makeComponents(sources: Source[] | undefined): Components {
   const cite = (c: ReactNode) => withCitations(c, sources);
+  return {
+    p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{cite(children)}</p>,
+    h1: ({ children }) => <h1 className="mb-2 mt-4 text-2xl font-semibold first:mt-0">{cite(children)}</h1>,
+    h2: ({ children }) => <h2 className="mb-2 mt-4 text-xl font-semibold first:mt-0">{cite(children)}</h2>,
+    h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-lg font-semibold first:mt-0">{cite(children)}</h3>,
+    ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5 marker:text-muted-foreground/50">{children}</ul>,
+    ol: ({ children, start }) => (
+      <ol start={start} className="my-2 list-decimal space-y-1 pl-5 marker:text-muted-foreground/60">{children}</ol>
+    ),
+    li: ({ children }) => <li>{cite(children)}</li>,
+    strong: ({ children }) => <strong className="font-semibold text-foreground">{cite(children)}</strong>,
+    em: ({ children }) => <em className="italic">{cite(children)}</em>,
+    a: ({ href, children }) => (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-foreground underline decoration-border underline-offset-[3px] transition-colors hover:decoration-primary/70 hover:text-primary"
+      >
+        {children}
+      </a>
+    ),
+    blockquote: ({ children }) => (
+      <blockquote className="my-2 border-l-2 border-border pl-3 text-foreground/75">{children}</blockquote>
+    ),
+    hr: () => <hr className="my-4 border-border/70" />,
+    table: ({ children }) => (
+      <div className="my-3 overflow-x-auto">
+        <table className="w-full border-collapse font-sans text-sm">{children}</table>
+      </div>
+    ),
+    th: ({ children }) => <th className="border border-border bg-muted/40 px-2 py-1 text-left font-semibold">{cite(children)}</th>,
+    td: ({ children }) => <td className="border border-border px-2 py-1">{cite(children)}</td>,
+    pre: ({ children }) => <>{children}</>,
+    code: ({ className, children }) => {
+      // An empty fence (a block that has only just opened mid-stream) has no
+      // children at all; String(undefined) would render the word "undefined".
+      const raw = String(children ?? "").replace(/\n$/, "");
+      const match = /language-(\w+)/.exec(className || "");
+      const isBlock = !!match || raw.includes("\n");
+      if (!isBlock) {
+        return <code className="rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">{children}</code>;
+      }
+      return <CodeBlock code={raw} lang={match?.[1]} />;
+    },
+  };
+}
+
+/** One top-level block. Memoized on its text, so a finished paragraph is parsed
+ *  once and then left alone while later ones stream in. */
+const MarkdownBlock = memo(function MarkdownBlock({ md, components }: { md: string; components: Components }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{cite(children)}</p>,
-        h1: ({ children }) => <h1 className="mb-2 mt-4 text-2xl font-semibold first:mt-0">{cite(children)}</h1>,
-        h2: ({ children }) => <h2 className="mb-2 mt-4 text-xl font-semibold first:mt-0">{cite(children)}</h2>,
-        h3: ({ children }) => <h3 className="mb-1.5 mt-3 text-lg font-semibold first:mt-0">{cite(children)}</h3>,
-        ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5 marker:text-muted-foreground/50">{children}</ul>,
-        ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5 marker:text-muted-foreground/60">{children}</ol>,
-        li: ({ children }) => <li>{cite(children)}</li>,
-        strong: ({ children }) => <strong className="font-semibold text-foreground">{cite(children)}</strong>,
-        em: ({ children }) => <em className="italic">{cite(children)}</em>,
-        a: ({ href, children }) => (
-          <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-foreground underline decoration-border underline-offset-[3px] transition-colors hover:decoration-primary/70 hover:text-primary"
-          >
-            {children}
-          </a>
-        ),
-        blockquote: ({ children }) => (
-          <blockquote className="my-2 border-l-2 border-border pl-3 text-foreground/75">{children}</blockquote>
-        ),
-        hr: () => <hr className="my-4 border-border/70" />,
-        table: ({ children }) => (
-          <div className="my-3 overflow-x-auto">
-            <table className="w-full border-collapse font-sans text-sm">{children}</table>
-          </div>
-        ),
-        th: ({ children }) => <th className="border border-border bg-muted/40 px-2 py-1 text-left font-semibold">{cite(children)}</th>,
-        td: ({ children }) => <td className="border border-border px-2 py-1">{cite(children)}</td>,
-        pre: ({ children }) => <>{children}</>,
-        code: ({ className, children }) => {
-          const raw = String(children).replace(/\n$/, "");
-          const match = /language-(\w+)/.exec(className || "");
-          const isBlock = !!match || raw.includes("\n");
-          if (!isBlock) {
-            return <code className="rounded bg-muted/70 px-1.5 py-0.5 font-mono text-[0.85em] text-foreground">{children}</code>;
-          }
-          return <CodeBlock code={raw} lang={match?.[1]} />;
-        },
-      }}
-    >
-      {text}
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={components}>
+      {md}
     </ReactMarkdown>
+  );
+});
+
+function Markdown({ text, sources, streaming }: { text: string; sources?: Source[]; streaming: boolean }) {
+  const components = useMemo(() => makeComponents(sources), [sources]);
+  // Rendered the same way while streaming and after, so the last token does
+  // not swap one DOM tree for another and nudge the layout.
+  const blocks = canSplit(text) ? splitBlocks(text) : [text];
+  // No wrapper per block: ReactMarkdown renders bare elements, so the blocks'
+  // paragraphs, lists and tables end up siblings exactly as in one big render,
+  // and the first:/last: margin rules still see the real first and last child.
+  return (
+    <>
+      {blocks.map((md, i) => {
+        const shown = streaming && i === blocks.length - 1 ? stabilizeTail(md) : md;
+        return shown ? <MarkdownBlock key={i} md={shown} components={components} /> : null;
+      })}
+    </>
   );
 }
 
@@ -163,7 +199,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 }
 
 // ── Message item ─────────────────────────────────────────────────────────────
-export function MessageItem({
+export const MessageItem = memo(function MessageItem({
   turn,
   onSpeak,
   speaking,
@@ -177,6 +213,8 @@ export function MessageItem({
   const isUser = turn.role === "user";
   const isError = turn.status === "error";
   const streaming = turn.status === "streaming";
+  // Hooks before the early returns below.
+  const displayed = useSmoothText(turn.content, streaming && !isUser);
 
   if (isUser) {
     return (
@@ -220,12 +258,9 @@ export function MessageItem({
     >
       <SearchActivity turn={turn} />
 
-      {turn.content ? (
+      {displayed ? (
         <div className="min-w-0 font-display text-[1.0625rem] leading-[1.75] text-foreground">
-          <Markdown text={turn.content} sources={turn.sources} />
-          {streaming ? (
-            <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-primary/80 align-text-bottom" />
-          ) : null}
+          <Markdown text={displayed} sources={turn.sources} streaming={streaming} />
         </div>
       ) : streaming ? (
         <AnswerSkeleton />
@@ -270,4 +305,4 @@ export function MessageItem({
       ) : null}
     </motion.div>
   );
-}
+});

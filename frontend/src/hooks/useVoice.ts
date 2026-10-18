@@ -137,6 +137,10 @@ const VAD_FRAME_SAMPLE_RATE = 16_000;
  *  waiting on VAD. This is pure dead air at the end of every utterance on that
  *  path, so it's kept just above a natural mid-sentence pause. */
 const WEB_SPEECH_IDLE_MS = 600;
+/** How long to rely on the browser's recognizer after Whisper fails. */
+const WHISPER_COOLDOWN_MS = 60_000;
+/** How long a pause must last before the speculative Whisper decode starts. */
+const SPECULATIVE_DECODE_DELAY_MS = 350;
 /** Shorter wait once the recognizer has promoted the phrase to `isFinal` with no
  *  interim text trailing it: its endpointer has already spent its own silence
  *  window deciding the phrase ended, so repeating that wait is pure lag. Not
@@ -348,6 +352,16 @@ export type VoiceState = "idle" | "listening" | "transcribing" | "error";
 export interface UseVoiceOptions {
   lang?: string;
   mode?: "auto" | "webspeech" | "whisper";
+  /**
+   * In `auto` mode, let Whisper decide the final words of every turn and use
+   * the browser's recognizer only for what it is fast at: live text for
+   * barge-in and pause judgement. The browser's recognizer (Google's, in
+   * Chrome) mishears accented English and acronyms that Whisper gets right —
+   * "THAAD" came back as "hard system", "30th system" and "is third" in one
+   * session while Whisper heard it every time. Worth its round trip only when
+   * that trip is short: a GPU, or hosted transcription on the user's key.
+   */
+  preferWhisperFinal?: boolean;
   onTranscript: (text: string) => void;
   /** Classify live STT while the assistant may be audible. */
   onSpeechCandidate?: (transcript: string) => "echo" | "interrupt" | "accept" | void;
@@ -406,6 +420,21 @@ export interface UseVoiceReturn {
 export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
   const lang = opts.lang ?? config.defaultLang;
   const mode = opts.mode ?? config.sttMode;
+  // A ref, not a dependency: the capability probe that decides this answers
+  // after mount, and the callbacks below are created once and kept in refs.
+  const whisperFinalRef = useRef(false);
+  whisperFinalRef.current = mode === "auto" && (opts.preferWhisperFinal ?? false);
+  /** Until when Whisper is skipped after a failed transcription. A key that is
+   *  rate-limited or out of credit fails every request for minutes, and asking
+   *  anyway costs two doomed round trips per turn (speculative + final) before
+   *  the browser's transcript is used. */
+  const whisperCooldownUntilRef = useRef(0);
+  const whisperCoolingDown = () => Date.now() < whisperCooldownUntilRef.current;
+  const whisperDecides = () => whisperFinalRef.current && !whisperCoolingDown();
+  const noteWhisperFailed = (e: unknown) => {
+    whisperCooldownUntilRef.current = Date.now() + WHISPER_COOLDOWN_MS;
+    debugLog(`STT: Whisper failed — using the browser's recognizer for ${WHISPER_COOLDOWN_MS / 1000}s`, e);
+  };
 
   const [state, setState] = useState<VoiceState>("idle");
   const [interim, setInterim] = useState("");
@@ -532,6 +561,13 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
    * disarmed could be replayed into the next turn.
    */
   const consumedResultIndexRef = useRef(0);
+  /** Pending delayed start of the speculative decode (see considerEndpoint). */
+  const speculativeTimerRef = useRef<number | null>(null);
+  /** When the current silence's endpoint wait began, and how many words had
+   *  been heard then. A late recognizer result re-asks the endpointer; without
+   *  this the re-ask restarted the full wait, so one pause cost it twice. */
+  const holdStartedAtRef = useRef(0);
+  const holdWordsRef = useRef(0);
   /** Highest `results.length` the recognizer has reported, so arming a turn can
    *  discard any interim still pending from the utterance that just ended. */
   const lastSeenResultCountRef = useRef(0);
@@ -635,6 +671,9 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
 
   // ── Per-turn bookkeeping ──────────────────────────────────────────────────
   const resetTurnState = useCallback(() => {
+    clearTimer(speculativeTimerRef);
+    holdStartedAtRef.current = 0;
+    holdWordsRef.current = 0;
     recordedRef.current = [];
     vadAudioRef.current = null;
     finalTextRef.current = "";
@@ -1035,6 +1074,8 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
           clearTimer(speechResultTimerRef);
           // The user resumed inside the thinking window: this is the same turn
           // continuing, so cancel the pending end rather than starting a new one.
+          holdStartedAtRef.current = 0;
+          clearTimer(speculativeTimerRef);
           if (endpointTimerRef.current !== null) {
             debugLog("endpoint: user resumed — turn continues");
             clearTimer(endpointTimerRef);
@@ -1285,10 +1326,15 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
     if (!listeningRef.current) return;
     // Echo audio is discarded at finalize without ever reaching Whisper;
     // transcribing it here would spend the round trip the echo path exists to skip.
-    if (assistantAudible() || (assistantEchoRef.current && !bargeInHandledRef.current)) return;
+    if (assistantEchoRef.current && !bargeInHandledRef.current) return;
+    // During playback, only once the speech has been judged a likely
+    // interruption. Skipping every playback turn cost each real barge-in the
+    // whole head start: hold, THEN a 2s decode, measured at 3.6s from the
+    // user's last word to the request on a GPU that decodes in 2s.
+    if (assistantAudible() && !acousticBargeInRaisedRef.current && !bargeInHandledRef.current) return;
     const webSpeechText = (liveTextRef.current || finalTextRef.current).trim();
     if (mode === "webspeech") return;
-    if (mode === "auto" && webSpeechWorkedRef.current && webSpeechText.length > 0) return;
+    if (mode === "auto" && !whisperDecides() && webSpeechWorkedRef.current && webSpeechText.length > 0) return;
     const segments = segmentsRef.current;
     if (segments.length === 0) return;
     const key = segmentsFingerprint(segments);
@@ -1298,7 +1344,7 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
     speculativeKeyRef.current = key;
     speculativePromiseRef.current = transcribe(blob, whisperPromptRef.current ?? "", lang)
       .catch((e) => {
-        debugLog("speculative transcribe failed (non-fatal)", e);
+        noteWhisperFailed(e);
         return null;
       });
     debugLog("STT: speculative Whisper started during endpoint hold");
@@ -1356,6 +1402,17 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
     const decision = judgeEndpoint(heard, prosodyContourRef.current);
     const elapsed = turnStartedAtRef.current ? Date.now() - turnStartedAtRef.current : 0;
 
+    // The wait is measured from when this silence began, not from this call.
+    // New words since then (the recognizer catching up on what was said)
+    // restart it; a re-ask over the same words only gets the remainder.
+    const heardWords = wordCount(heard);
+    if (!holdStartedAtRef.current || heardWords > holdWordsRef.current) {
+      holdStartedAtRef.current = Date.now();
+      holdWordsRef.current = heardWords;
+    }
+    const waited = Date.now() - holdStartedAtRef.current;
+    const remainingMs = (ms: number) => Math.max(0, ms - waited);
+
     // Two backstops, so a turn cannot be held open indefinitely by someone who
     // keeps trailing off: total length, and number of consecutive holds.
     const exhausted =
@@ -1363,7 +1420,7 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
 
     if (decision.completeness === "complete" || exhausted) {
       debugLog(
-        `endpoint: finalizing after ${decision.waitMs}ms — ${exhausted ? "turn budget spent" : decision.reason}`,
+        `endpoint: finalizing after ${remainingMs(decision.waitMs)}ms — ${exhausted ? "turn budget spent" : decision.reason} — ${JSON.stringify(heard)}`,
       );
       setHoldingForSpeech(false);
       // The wait is now also decode time: Whisper works through the audio while
@@ -1372,44 +1429,57 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
       endpointTimerRef.current = window.setTimeout(() => {
         endpointTimerRef.current = null;
         finishAndSendRef.current();
-      }, exhausted ? ENDPOINT_COMPLETE_MS : decision.waitMs);
+      }, remainingMs(exhausted ? ENDPOINT_COMPLETE_MS : decision.waitMs));
       return;
     }
 
     // Unfinished. Hold the microphone open — `onSpeechStart` cancels this timer
     // if the user resumes, which is what joins the fragments into one turn.
-    debugLog(`endpoint: holding ${decision.waitMs}ms — ${decision.reason}`);
+    debugLog(
+      `endpoint: holding ${remainingMs(decision.waitMs)}ms — ${decision.reason} — ${JSON.stringify(heard)}`,
+    );
     setHoldingForSpeech(true);
-    // Worth starting even though the user may resume: if they do, the result is
-    // dropped by the fingerprint check; if they don't, the whole hold window was
-    // decode time. On the GPU a wasted short decode costs almost nothing.
-    beginSpeculativeTranscribeRef.current();
     const holdTimer = window.setTimeout(() => {
       endpointTimerRef.current = null;
       setHoldingForSpeech(false);
       debugLog("endpoint: thinking window elapsed — finalizing");
       finishAndSendRef.current();
-    }, decision.waitMs);
+    }, remainingMs(decision.waitMs));
     endpointTimerRef.current = holdTimer;
 
-    // With no live text (Web Speech down or not in use) the endpointer had
-    // nothing to judge and fell back to the "unclear" wait on every turn. The
-    // speculative decode usually lands well inside that window, so judge its
-    // words instead: a complete sentence ends the hold early. Only ever
-    // shortens — an unfinished one keeps the full wait, and if the user
-    // resumes, onSpeechStart clears the timer and this does nothing.
-    if (!heard && speculativePromiseRef.current) {
-      const key = speculativeKeyRef.current;
-      void speculativePromiseRef.current.then((text) => {
-        if (!text || endpointTimerRef.current !== holdTimer || speculativeKeyRef.current !== key) return;
-        const late = judgeEndpoint(text, prosodyContourRef.current);
-        if (late.completeness !== "complete") return;
-        clearTimer(endpointTimerRef);
-        setHoldingForSpeech(false);
-        debugLog(`endpoint: Whisper heard a complete turn — finalizing early (${late.reason})`);
-        finishAndSendRef.current();
-      });
-    }
+    // Worth starting even though the user may resume: if they don't, the whole
+    // hold window was decode time. But not instantly — a breath mid-sentence
+    // is a hold of a few hundred ms, and a decode fired for it queues on the
+    // same GPU ahead of the real one (measured: 6.1s instead of 2s for the
+    // turn that followed). Wait out the briefest pauses first.
+    clearTimer(speculativeTimerRef);
+    speculativeTimerRef.current = window.setTimeout(() => {
+      speculativeTimerRef.current = null;
+      if (endpointTimerRef.current !== holdTimer) return; // the user resumed
+      beginSpeculativeTranscribeRef.current();
+
+      // With no live text (Web Speech down or not in use) the endpointer had
+      // nothing to judge and fell back to the "unclear" wait on every turn. The
+      // speculative decode usually lands well inside that window, so judge its
+      // words instead: a complete sentence ends the hold early. Only ever
+      // shortens — an unfinished one keeps the full wait, and if the user
+      // resumes, onSpeechStart clears the timer and this does nothing.
+      // With Whisper deciding the final words, its reading also gets to end
+      // the hold: Chrome's live text for "what is THAAD" was "hard system" —
+      // two words, judged "too short", a 4s wait — while Whisper had the question.
+      if ((!heard || whisperDecides()) && speculativePromiseRef.current) {
+        const key = speculativeKeyRef.current;
+        void speculativePromiseRef.current.then((text) => {
+          if (!text || endpointTimerRef.current !== holdTimer || speculativeKeyRef.current !== key) return;
+          const late = judgeEndpoint(text, prosodyContourRef.current);
+          if (late.completeness !== "complete") return;
+          clearTimer(endpointTimerRef);
+          setHoldingForSpeech(false);
+          debugLog(`endpoint: Whisper heard a complete turn — finalizing early (${late.reason})`);
+          finishAndSendRef.current();
+        });
+      }
+    }, SPECULATIVE_DECODE_DELAY_MS);
   }, []);
   considerEndpointRef.current = considerEndpoint;
 
@@ -1429,7 +1499,7 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
     const webSpeechText = (liveTextRef.current || finalTextRef.current).replace(/\s+/g, " ").trim();
     let useWebSpeechResult =
       mode === "webspeech" ||
-      (mode === "auto" && webSpeechWorkedRef.current && webSpeechText.length > 0);
+      (mode === "auto" && !whisperDecides() && webSpeechWorkedRef.current && webSpeechText.length > 0);
 
     // Every segment this turn collected, joined back into one clip. A turn that
     // spanned a thinking pause has several; Whisper must see the whole thing or
@@ -1445,7 +1515,7 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
     // means the recognizer missed most of the utterance, so spend the Whisper
     // round trip on the full audio instead. Only in auto mode — an explicit
     // webspeech mode has no Whisper to fall back to.
-    if (useWebSpeechResult && mode === "auto" && vadAudio) {
+    if (useWebSpeechResult && mode === "auto" && vadAudio && !whisperCoolingDown()) {
       const audioMs = segments.reduce((n, s) => n + s.length, 0) / 16; // 16kHz
       if (audioMs > 3000 && wordCount(webSpeechText) < audioMs / 2000) {
         debugLog(
@@ -1514,13 +1584,20 @@ export function useVoice(opts: UseVoiceOptions): UseVoiceReturn {
         try {
           let text = speculative ? await speculative : null;
           if (text !== null && speculative) debugLog("STT: speculative result reused");
-          if (text === null) text = await transcribe(blob, whisperPromptRef.current ?? "", lang);
+          if (text === null) {
+            // The speculative request just failed; with words from the browser
+            // in hand, don't make a second request to the same failing key.
+            if (whisperCoolingDown() && webSpeechText) throw new Error("Whisper cooling down");
+            text = await transcribe(blob, whisperPromptRef.current ?? "", lang);
+          }
           if (!stillCurrent()) return;
           finalText = cleanTranscript(text);
           debugLog("STT path: Whisper ->", finalText);
         } catch (e) {
           if (!stillCurrent()) return;
+          if (!whisperCoolingDown()) noteWhisperFailed(e);
           if (webSpeechText) {
+            debugLog("STT path: Web Speech (Whisper unavailable) ->", webSpeechText);
             finalText = cleanTranscript(webSpeechText);
           } else {
             failWith((e as Error).message || "Transcription failed");
