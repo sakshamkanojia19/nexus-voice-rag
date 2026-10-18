@@ -72,7 +72,7 @@ _cache: dict[str, tuple[float, list[dict]]] = {}
 # and "Mozilla/5.0" get a 403 pointing at https://w.wiki/4wJS, which silently
 # disabled this whole fallback tier. Their policy wants a descriptive name plus a
 # way to reach the operator — set HTTP_CONTACT to a real address you own.
-_CONTACT = os.getenv("HTTP_CONTACT", "https://github.com/sakshamkanojia19/nexus").strip()
+_CONTACT = os.getenv("HTTP_CONTACT", "https://github.com/sakshamkanojia19/nexus-voice-rag").strip()
 USER_AGENT = os.getenv("HTTP_USER_AGENT", f"Nexus/0.3 (+{_CONTACT}) python-httpx").strip()
 
 # Snippets run ~240 chars each, so four of them is a very thin basis for an

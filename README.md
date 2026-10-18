@@ -8,7 +8,7 @@
 
 **Talk to your documents and the live web — hands-free, cited, self-hosted.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/sakshamkanojia19/nexus/ci.yml?branch=main&style=flat-square&label=tests)](https://github.com/sakshamkanojia19/nexus/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/sakshamkanojia19/nexus-voice-rag/ci.yml?branch=main&style=flat-square&label=tests)](https://github.com/sakshamkanojia19/nexus-voice-rag/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8b5cf6?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3b6ea5?style=flat-square&logo=python&logoColor=white)](requirements.txt)
 [![React](https://img.shields.io/badge/react-18-61dafb?style=flat-square&logo=react&logoColor=black)](frontend/package.json)
@@ -33,12 +33,12 @@ Nexus is built the other way around:
 
 |  | Typical voice bot | **Nexus** |
 |---|---|---|
-| 🎤 Turn-taking | Fixed silence timer cuts you off mid-thought | Reads the **words**: "what's the capital of…" holds the mic, "…of France?" answers in ~700ms |
+| 🎤 Turn-taking | Fixed silence timer cuts you off mid-thought | Reads the **words**: "what's the capital of…" holds the mic, "…of France?" releases the mic in ~0.7s |
 | ✋ Interruption | Talks over you, or hears itself and loops | **Barge-in with 6 stacked defences** — pause, confirm, resume or commit |
-| 📝 Speech-to-text | Hosted API, billed per minute | **faster-whisper on your GPU**, ~3× realtime, decoding *while* you pause |
-| 💸 Who pays | The operator, for everyone | **Nobody for voice when self-hosted** (on-device STT, browser TTS) · users bring their own **OpenAI, Grok or Groq** key for the LLM |
-| 📚 Answers | Model memory only | Your documents + live web, **every claim cited [n]** |
-| 🔓 Source | Closed SaaS | **MIT open source, self-hosted, open-model voice stack** |
+| 📝 Speech-to-text | Hosted API, billed per minute | **faster-whisper on your GPU**, ~2–3× realtime, decoding *while* you pause |
+| 💸 Who pays | The operator, for everyone | **Nobody for voice when self-hosted** (local Whisper STT, browser TTS) · users bring their own **OpenAI, Grok or Groq** key for the LLM |
+| 📚 Answers | Model memory only | Your documents + live web, **cited inline [n]** |
+| 🔓 Source | Closed SaaS | **MIT open source, self-hosted, open-model speech recognition** |
 
 > **The pitch in one line:** a research assistant that listens like a person, costs nothing per voice turn when self-hosted on your own GPU, and never spends the operator's money on a stranger's question.
 
@@ -54,7 +54,7 @@ Nexus is built the other way around:
 - **Content-aware endpointing** — turn-end judged from grammar (dangling conjunctions, fillers, Hindi SOV terminals) + **pitch contour** tie-breaking, not a dumb timer
 - **Barge-in done properly** — pause-then-confirm, false-interruption recovery that resumes on the exact word, history truncated to what you actually *heard*
 - **Never talks to itself** — guarded VAD thresholds, fuzzy echo matching, sentence-level echo surgery on mixed recordings
-- **17 languages, 7 of them Indian** — Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati and Punjabi alongside English, Urdu, Arabic, Chinese, Japanese and major European languages; recognition, transcription and replies all follow the chosen language
+- **15 languages, 7 of them Indian** (17 with regional English) — Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati and Punjabi alongside English, Urdu, Arabic, Chinese, Japanese and major European languages; recognition, transcription and replies all follow the chosen language
 - **22+ voice personas** — every system voice becomes a named agent with a locale-correct name: *Priya* for Hindi, *Kai* for UK English, *Greta* for German
 - **TTS is browser-native `speechSynthesis` by choice** — zero-cost, offline, streams sentence-by-sentence; the swap seam for a studio-quality streaming vendor is [`useSpeech.ts`](frontend/src/hooks/useSpeech.ts)
 - **Speaks while it works** — "One sec, looking that up" the instant a search starts
@@ -66,7 +66,8 @@ Nexus is built the other way around:
 - **Upload PDFs / DOCX / TXT / MD** → chunked, embedded, stored in Qdrant per account
 - **The model routes itself** — knowledge answered instantly, your files via `search_documents`, the web via `search_web`; no regex triggers
 - **Four search modes** — Instant · Web · Deep Research · Thinking; budget exhaustion **synthesizes** from gathered sources instead of apologizing
-- **Trust-ordered web search** — hosted search → Tavily → guarded scraping that can't fabricate citations
+- **Trust-ordered web search** — your key's own hosted search → Tavily → guarded scraping that can't fabricate citations → Wikipedia, under a 14s ceiling
+- **Streaming that doesn't jump** — one render per frame, finished paragraphs left alone, half-written markdown held back until it's whole
 - **Inline `[n]` citations** mapping to document pages and URLs
 
 </td>
@@ -77,9 +78,10 @@ Nexus is built the other way around:
 ### ⚡ Measured, not promised
 | Stage | Latency |
 |---|---|
-| Speech-end → transcript | **~0.6s** (GPU + speculative decode) |
-| Turn-end wait (complete sentence) | **700ms** |
-| Time-to-first-token (voice) | **~1s** |
+| Whisper decode, 3.5s question | **~1.6s** (`large-v3-turbo`, GTX 1650 Ti) |
+| Turn-end wait (complete sentence) | **700ms** · 1.2s when the voice rises at the end |
+| Time-to-first-token (voice) | **0.5–2.6s** (Groq `gpt-oss-20b`, no search) |
+| Web search, free path | **1.5–5.2s** per query, 14s ceiling |
 | Cost per voice turn | **$0** self-hosted on your GPU · hosted deploys bill transcription to the user's own OpenAI or Groq key |
 
 </td>
@@ -123,7 +125,7 @@ flowchart LR
         AU["Supabase auth · BYOK credentials"]
     end
     CH --> QD[("Qdrant<br/>vectors")]
-    CH --> W["Web search<br/>OpenAI → Tavily → guarded scrape"]
+    CH --> W["Web search<br/>OpenAI / Groq → Tavily → guarded scrape → Wikipedia"]
     AU --> SB[("Supabase<br/>auth + sync")]
     frontend <-->|NDJSON / HTTP| backend
 ```
@@ -137,7 +139,7 @@ Deep dives: [ARCHITECTURE.md](ARCHITECTURE.md) · [WORKFLOW.md](WORKFLOW.md) · 
 The features above are the result. This is the work behind them: real failures from captured sessions, what I measured, and what I changed. Each entry links to the code, where the full reasoning lives in comments.
 
 **1. A silence timer can't tell a pause from an ending.**
-"What's the capital of…" and "What's the capital of France?" end in the same silence. I built an endpointer that reads the words instead (dangling conjunctions, fillers, Hindi's verb-final grammar) and uses pitch contour as the tie-breaker, holding the mic 700–4000ms depending on how finished the sentence sounds. Whisper decodes speculatively during that hold, so the wait costs no latency. → [`endpointing.ts`](frontend/src/lib/endpointing.ts) · [`prosody.ts`](frontend/src/lib/prosody.ts)
+"What's the capital of…" and "What's the capital of France?" end in the same silence. I built an endpointer that reads the words instead (dangling conjunctions, fillers, Hindi's verb-final grammar) and uses pitch contour as the tie-breaker, holding the mic 700–4000ms depending on how finished the sentence sounds. Whisper decodes speculatively during that hold, so most of the wait doubles as decode time. → [`endpointing.ts`](frontend/src/lib/endpointing.ts) · [`prosody.ts`](frontend/src/lib/prosody.ts)
 
 **2. The assistant kept hearing itself.**
 Speaker audio leaks into the mic, and the recognizer hands the reply back as a new question. I stacked six defences against it, down to sentence-level echo surgery that cuts the assistant's words out of a mixed recording and keeps the user's. The hardest case came from a captured session: a real interruption arrived *silent* during playback, was classified as echo, and was thrown away three times in a row. It is now transcribed instead of assumed. → [`echo.ts`](frontend/src/lib/echo.ts) · [`voice-gate.ts`](frontend/src/lib/voice-gate.ts)
@@ -152,22 +154,31 @@ Bigger Whisper models are more accurate, so the instinct is to take the biggest.
 | `large-v3-turbo` | 18.2s |
 | `distil-large-v3` | 21.3s |
 
-On my GTX 1650 Ti, `large-v3-turbo` runs ~3× faster than realtime, but only with `int8_float16`. Plain `float16` is ~4× slower on a card without tensor cores. So `auto` picks the model from the device, and if CUDA breaks, voice steps down a model ladder to CPU instead of dying. → [`stt.py`](backend/stt.py)
+On my GTX 1650 Ti, `large-v3-turbo` runs ~2–3× faster than realtime (1.6s for a 3.5s question), but only with `int8_float16`. Plain `float16` is ~4× slower on a card without tensor cores. So `auto` picks the model from the device, and if CUDA breaks, voice steps down a model ladder to CPU instead of dying. → [`stt.py`](backend/stt.py)
 
 **4. Whisper hears "RAG" as "drag".**
 It guesses toward common English. I feed it an initial prompt built from the conversation's own vocabulary, which biases the decoder toward the words this user is actually using without forcing them. → [`whisper-prompt.ts`](frontend/src/lib/whisper-prompt.ts)
 
 **5. Whisper invents text on silence.**
-"Thanks for watching!", a YouTube-subtitle artifact, arrived looking exactly like a real transcript and got answered as a question. Segments are now filtered on no-speech probability and log-probability, against a list of known artifacts (including a Hindi one), and for the prompt being echoed back. → [`stt.py`](backend/stt.py)
+"Thanks for watching!", a YouTube-subtitle artifact, arrived looking exactly like a real transcript and got answered as a question. Segments are now filtered on no-speech probability and log-probability, against a list of known artifacts (including a Hindi one), and for the prompt being echoed back. Hosted Whisper gets the same filter: it is asked for per-segment confidences instead of plain text, after speaker echo came back as "I'm sorry." and "And I will tell you." and was answered as the user's words. → [`stt.py`](backend/stt.py)
 
 **6. Scraped web search is confidently wrong.**
 When a search engine blocks a scraper, it still answers HTTP 200. "Elon Musk total revenue 2026" came back as snail-mucin skincare listings, which would have become citations. Every scraped result now has to pass a relevance gate tuned on real data: every off-topic result scored 0.0, thin-but-genuine matches scored 0.25, and the cutoff sits at 0.2. Scraping is also the last resort, behind real search APIs. → [`web_search.py`](backend/web_search.py)
 
 **7. An API key can leak through an error message.**
-Providers quote the rejected key in their 401 response. Every error is redacted before it is logged or shown, and user keys never enter shared client caches. Since adding Grok and Groq, a key only ever travels to its own provider: a feature that provider lacks is switched off, never quietly paid for with the operator's key. 34 tests hold these properties in place. → [`credentials.py`](backend/credentials.py) · [`providers.py`](backend/providers.py)
+Providers quote the rejected key in their 401 response. Every error is redacted before it is logged or shown, and user keys never enter shared client caches. Since adding Grok and Groq, a key only ever travels to its own provider: a feature that provider lacks is switched off, never quietly paid for with the operator's key. 37 tests hold these properties in place. → [`credentials.py`](backend/credentials.py) · [`providers.py`](backend/providers.py)
 
 **8. Running out of tool calls produced an apology.**
 The agent had gathered a dozen sources, then printed "please rephrase". Its final round now runs with tools disabled and has to write the answer from what it found. → [`agent.py`](backend/agent.py)
+
+**9. Warming Whisper with silence warms nothing.**
+Loading the model at boot still left the first spoken turn at 15.9s on a GTX 1650 Ti, against 1.6s for every turn after. A warm-up decode of four seconds of noise only got it to 4.7s: the decoder sets up its GPU kernels when it has words to produce. Nexus now decodes a bundled spoken sentence at boot, and the first real turn takes 1.6s. → [`stt.py`](backend/stt.py)
+
+**10. Two of three web-search attempts could never succeed.**
+The scraper's fallback attempts named search engines its library had since removed, and nothing bounded the whole ladder, so one search took 17–25s. It is now one bounded attempt, Wikipedia summaries fetched in parallel, a 14s ceiling, and a round's searches run concurrently: 1.5–5.2s on live queries. → [`web_search.py`](backend/web_search.py)
+
+**11. Streaming answers jumped.**
+Groq delivers tokens in bursts of hundreds. Every one re-rendered the app, re-parsed the whole answer's markdown and restarted a smooth scroll, while half-written syntax (`**bo`, `[1`, a table row) flashed raw and then snapped into place. Updates now land once per frame and are revealed at a steady pace, finished blocks are memoized, and incomplete markdown is held back until it's whole. Block elements rebuilt over one long answer: 29 → 6–7. → [`stream-markdown.ts`](frontend/src/lib/stream-markdown.ts) · [`MessageItem.tsx`](frontend/src/components/rag/MessageItem.tsx)
 
 ---
 
@@ -177,14 +188,14 @@ Voice-agent frameworks like [LiveKit Agents](https://github.com/livekit/agents) 
 
 - **It runs on a laptop.** No media server and no voice vendor; a 4GB GPU is the whole infrastructure, and a voice turn costs nothing.
 - **Every voice decision is readable.** Endpointing, echo handling and barge-in are small, dependency-free modules, tested against failures captured from real conversations.
-- **It's a research assistant, not a phone bot.** It answers from your documents and the live web, with a citation behind every claim.
+- **It's a research assistant, not a phone bot.** It answers from your documents and the live web, with inline citations to its sources.
 - **Any of three LLMs, on the user's own key.** OpenAI, Grok or Groq, each key sent only to its own provider.
 
 ---
 
 ## 🚀 Quick start
 
-> **Prereqs:** Python 3.11+ · Node 18+ · a free [Qdrant Cloud](https://cloud.qdrant.io) cluster · an OpenAI, xAI (Grok) or Groq API key
+> **Prereqs:** Python 3.11+ · Node 22+ · a free [Qdrant Cloud](https://cloud.qdrant.io) cluster · an OpenAI, xAI (Grok) or Groq API key
 
 ```powershell
 # 1️⃣  Backend
@@ -207,11 +218,11 @@ Open **http://localhost:5173** → landing page → *Start for free* → sign in
 Health check: http://localhost:8001/health
 
 <details>
-<summary><b>⚡ Optional: GPU speech-to-text (any NVIDIA card) — a larger, more accurate model at ~3× realtime</b></summary>
+<summary><b>⚡ Optional: GPU speech-to-text (any NVIDIA card) — a larger, more accurate model at ~2–3× realtime</b></summary>
 
 <br>
 
-CPU works out of the box with the `base` model. A GPU buys two separate things: `large-v3-turbo` is a **larger model → noticeably more accurate**, and CUDA runs it at **~3× realtime → faster than you can speak**:
+CPU works out of the box with the `base` model. A GPU buys two separate things: `large-v3-turbo` is a **larger model → noticeably more accurate**, and CUDA runs it at **~2–3× realtime → faster than you can speak**:
 
 ```powershell
 pip install -r requirements-gpu.txt
@@ -223,7 +234,7 @@ LOCAL_WHISPER_DEVICE=cuda
 LOCAL_WHISPER_COMPUTE=int8_float16   # fastest on cards without tensor cores (GTX 16xx etc.)
 ```
 
-Measured on a GTX 1650 Ti (4GB): ~3× realtime, ~1.5GB VRAM only while the backend runs.
+Measured on a GTX 1650 Ti (4GB): ~2–3× realtime (1.6s for a 3.5s question), ~1.5GB VRAM only while the backend runs.
 If CUDA ever breaks, Nexus falls down a model ladder to CPU automatically — voice never dies.
 
 </details>
@@ -249,7 +260,9 @@ The knobs that matter (every setting is documented inline in [backend/config.py]
 | `XAI_*` / `GROQ_*` models | see `.env.example` | The same roles for Grok and Groq users |
 | `STT_BACKEND` | `local` | `local` (faster-whisper, free) or `openai` (hosted Whisper on the user's OpenAI or Groq key) |
 | `LOCAL_WHISPER_MODEL` | `auto` | `auto` → `large-v3-turbo` on GPU, `base` on CPU |
-| `WEB_SEARCH_PROVIDER` | `auto` | `openai` → `tavily` → `scrape`, first usable |
+| `LOCAL_STT_FALLBACK` | on for `local`, off otherwise | May the server run Whisper itself when a user's hosted transcription fails. Off on hosted deploys, so a user's exhausted quota never costs your CPU; the browser's transcript covers the turn |
+| `WEB_SEARCH_PROVIDER` | `auto` | `openai` / `groq` → `tavily` → `scrape` → Wikipedia, first usable |
+| `GROQ_BROWSER_SEARCH` | `false` | Groq's hosted search on the user's Groq key. Turn on for paid Groq keys; on the free tier it uses up the per-minute token budget |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | — | Auth + sync (optional; anonymous mode without) |
 | `REQUIRE_AUTH` | on if Supabase set | Sign-in gates all spending routes |
 | `REQUIRE_USER_API_KEY` | `false` | **Set `true` for public deployments** |
@@ -268,7 +281,7 @@ The knobs that matter (every setting is documented inline in [backend/config.py]
 | `VITE_BOT_NAME` | `Nexus` | Assistant display name |
 | `VITE_DEFAULT_LANG` | `en-IN` | BCP-47 — STT recognition + TTS voice |
 | `VITE_STT_MODE` | `auto` | `auto` / `webspeech` / `whisper` |
-| `VITE_DEBUG` | `true` | Verbose console tracing (latency numbers included) |
+| `VITE_DEBUG` | `false` | Verbose console tracing (latency numbers included). On a deployed build, open any page with `?debug=1` instead |
 
 </details>
 
@@ -290,7 +303,7 @@ gcloud run deploy nexus-api --source . --region asia-south1 \
 **Public-deployment checklist:**
 
 - [ ] `REQUIRE_AUTH=true` + `REQUIRE_USER_API_KEY=true` — visitors spend **their** keys, never yours. With both set you can leave `OPENAI_API_KEY` unset entirely: nothing on a request path falls back to a server key, so there is no bill to cap
-- [ ] `STT_BACKEND=openai` — no GPU in Cloud Run; hosted Whisper bills each user's own OpenAI or Groq key (xAI has no hosted STT, so Grok users fall back to CPU Whisper)
+- [ ] `STT_BACKEND=openai` — no GPU in Cloud Run; hosted Whisper bills each user's own OpenAI or Groq key, and the server never runs Whisper itself (xAI has no hosted STT, so Grok users get the browser's recognizer)
 - [ ] `COOKIE_SECURE=true` and your Vercel domain in `ALLOWED_ORIGINS`
 - [ ] Secrets in the platform's secret manager — `backend/.env` is gitignored and stays local
 - [ ] Optional: `--min-instances 1` to kill cold starts
@@ -302,17 +315,17 @@ gcloud run deploy nexus-api --source . --region asia-south1 \
 Every pure-logic module ships with a runnable test file — and the test cases are taken from **real captured failures** (actual console transcripts), not invented inputs.
 
 ```powershell
-# Frontend — 10 suites: endpointing, prosody, echo, voice-gate, agents, …
+# Frontend — 13 suites: endpointing, prosody, echo, voice-gate, stream-markdown, …
 cd frontend && npm test && npm run lint    # lint = tsc --noEmit, strict
 
 # Backend — script-style modules
-python -m backend.stt_test          # 30 checks
+python -m backend.stt_test          # 40 checks
 python -m backend.identity_test     # 57 checks
 python -m backend.credentials_test  # 17 checks
-python -m backend.providers_test    # 17 checks
+python -m backend.providers_test    # 20 checks
 python -m backend.auth_test
 python -m backend.conversations_test
-python -m backend.web_search_test
+python -m backend.web_search_test   # 13 checks
 ```
 
 ---
@@ -321,7 +334,7 @@ python -m backend.web_search_test
 
 **No voice cloud. No per-minute meter. No lock-in.**
 
-Every step of hearing you runs on open models, on your hardware:
+Every step that decides what you said runs on open models, on your hardware:
 
 [Silero VAD](https://github.com/snakers4/silero-vad) · [faster-whisper](https://github.com/SYSTRAN/faster-whisper) · [CTranslate2](https://github.com/OpenNMT/CTranslate2) · [ONNX Runtime](https://github.com/microsoft/onnxruntime) · [LangChain](https://github.com/langchain-ai/langchain) · [Qdrant](https://github.com/qdrant/qdrant) · [FastAPI](https://github.com/fastapi/fastapi) · [React](https://github.com/facebook/react)
 

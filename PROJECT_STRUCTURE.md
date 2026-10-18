@@ -34,6 +34,8 @@ nexus/
 │   │                                       hallucination filter) or hosted Whisper on the request's provider
 │   ├── config.py                         loads backend/.env: providers + models, search modes, embedding/RAG, STT,
 │   │                                       auth/BYOK policy, Supabase, CORS, port
+│   ├── assets/
+│   │   └── warmup.wav                    short spoken sentence decoded at boot so the first real turn is fast
 │   ├── migrations/
 │   │   └── 001_conversations.sql         conversations table, primary key (owner_key, id), jsonb messages; idempotent
 │   ├── *_test.py                         offline test suites, run as `python -m backend.<name>_test`:
@@ -151,6 +153,8 @@ nexus/
 │           ├── echo.ts                   speaker-echo filters: assistant-echo matching and low-information barge-in rejection
 │           ├── whisper-prompt.ts         Whisper initial_prompt vocabulary bias (app terms + document names)
 │           ├── speech-chunk.ts           opening-clause cut so TTS starts before the first sentence completes
+│           ├── stream-markdown.ts        streamed markdown: splits finished blocks for memoizing, holds back half-written syntax
+│           ├── smooth-reveal.ts          paced reveal of bursty token streams (display only; speech reads the raw text)
 │           ├── script-lang.ts            language detection from writing script, for TTS voice choice
 │           ├── languages.ts              supported conversation languages; load/save the choice
 │           ├── agents.ts                 browser TTS voices → named voice personas, greetings, ranking
@@ -158,7 +162,8 @@ nexus/
 │           ├── audio-cues.ts             Web Audio UI cues (call-end tone)
 │           ├── utils.ts                  cn() class merge, date helpers
 │           └── *.test.mjs                Node tests (`npm test`): accessGate · agents · apiKey · chatStorage · echo ·
-│                                           endpointing · prosody · script-lang · speech-chunk · voice-gate · whisper-prompt
+│                                           endpointing · prosody · script-lang · smooth-reveal · speech-chunk · stream-markdown ·
+│                                           voice-gate · whisper-prompt
 │
 ├── .github/
 │   ├── workflows/ci.yml                  CI: backend test suites, frontend typecheck + tests + build

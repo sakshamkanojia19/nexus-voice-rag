@@ -4,7 +4,7 @@ export const config = {
   appName: import.meta.env.VITE_APP_NAME || "nexus",
   botName: import.meta.env.VITE_BOT_NAME || "Nexus",
   // Where the landing page's GitHub links point.
-  repoUrl: (import.meta.env.VITE_REPO_URL || "https://github.com/sakshamkanojia19/nexus").replace(/\/$/, ""),
+  repoUrl: (import.meta.env.VITE_REPO_URL || "https://github.com/sakshamkanojia19/nexus-voice-rag").replace(/\/$/, ""),
   authorUrl: import.meta.env.VITE_AUTHOR_URL || "https://github.com/sakshamkanojia19",
   defaultLang: import.meta.env.VITE_DEFAULT_LANG || "en-IN",
   sttMode: (import.meta.env.VITE_STT_MODE || "auto") as "auto" | "webspeech" | "whisper",

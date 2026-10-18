@@ -21,7 +21,7 @@ const STACK = ["Silero VAD", "faster-whisper", "CTranslate2", "ONNX Runtime", "L
 const PIPELINE = [
   { n: "01", title: "Hears you", tech: "Silero VAD, in the browser", metric: "32 ms frames" },
   { n: "02", title: "Waits for the end", tech: "Grammar + pitch endpointing", metric: "700–4000 ms hold" },
-  { n: "03", title: "Transcribes", tech: "faster-whisper on your GPU", metric: "~3× realtime" },
+  { n: "03", title: "Transcribes", tech: "faster-whisper on your GPU", metric: "~2–3× realtime" },
   { n: "04", title: "Researches", tech: "Agent over your docs + the web", metric: "every claim cited" },
   { n: "05", title: "Answers", tech: "Streams sentence by sentence", metric: "interrupt any time" },
 ];
@@ -206,7 +206,7 @@ export function LandingPage() {
         <div className="lp-stats lp-reveal" role="list">
           <div className="lp-stat" role="listitem"><b>700 ms</b><span>to know you've finished</span></div>
           <div className="lp-stat" role="listitem"><b>$0</b><span>per voice minute, self-hosted</span></div>
-          <div className="lp-stat" role="listitem"><b>17</b><span>languages, 7 of them Indian</span></div>
+          <div className="lp-stat" role="listitem"><b>15</b><span>languages, 7 of them Indian</span></div>
           <div className="lp-stat" role="listitem"><b>MIT</b><span>open source</span></div>
         </div>
 
@@ -245,7 +245,7 @@ export function LandingPage() {
               <p>Turn-end is judged from the <b>words and the pitch contour</b> — dangling conjunctions, fillers, Hindi's verb-final grammar — not a silence timer that cuts you off mid-thought.</p>
               <div className="lp-utter" aria-label="Example of content-aware endpointing">
                 <div className="lp-u-line lp-u-hold"><span>“what's the capital of…”</span><span className="lp-u-tag">holds the mic</span></div>
-                <div className="lp-u-line lp-u-go"><span>“…of France?”</span><span className="lp-u-tag">replies after 700 ms</span></div>
+                <div className="lp-u-line lp-u-go"><span>“…of France?”</span><span className="lp-u-tag">turn ends at 700 ms</span></div>
               </div>
             </div>
 
@@ -261,7 +261,7 @@ export function LandingPage() {
             <div className="lp-card lp-c4 lp-reveal">
               <div className="lp-icon" aria-hidden><Cpu size={19} /></div>
               <h3>Speech-to-text on your GPU</h3>
-              <p>faster-whisper runs on your own machine at <b>~3× realtime</b> on a 4 GB laptop GPU, decoding while you pause. No per-minute meter.</p>
+              <p>faster-whisper runs on your own machine at <b>~2–3× realtime</b> on a 4 GB laptop GPU, decoding while you pause. No per-minute meter.</p>
             </div>
 
             <div className="lp-card lp-c4 lp-reveal">
@@ -328,7 +328,7 @@ export function LandingPage() {
             <article className="lp-eng-card lp-reveal">
               <p className="lp-eng-kicker">Security</p>
               <h3>Keys that leak through errors</h3>
-              <p>Providers quote rejected keys in their 401s. Every error is redacted, and each key only travels to its own provider — <b>34 tests</b> hold that in place.</p>
+              <p>Providers quote rejected keys in their 401s. Every error is redacted, and each key only travels to its own provider — <b>37 tests</b> hold that in place.</p>
             </article>
           </div>
 
